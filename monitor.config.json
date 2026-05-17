@@ -13,9 +13,12 @@
     "mode": "structured_page_json",
     "userAgent": "Mozilla/5.0 hyrox-ticket-monitor/1.0",
     "timeoutSeconds": 30,
+    "retryAttempts": 3,
+    "retryDelaySeconds": 10,
     "minimumMinutesBetweenChecks": 45,
     "alertOnlyOnChanges": true,
-    "stateFile": "monitor.state.json"
+    "stateFile": "monitor.state.json",
+    "logFile": "monitor.log"
   },
   "ticketFilter": {
     "onlyAthleteTickets": true,

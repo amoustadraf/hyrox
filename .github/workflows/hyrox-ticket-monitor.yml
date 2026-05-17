@@ -54,4 +54,38 @@ jobs:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           DISCORD_ENABLED: ${{ secrets.DISCORD_WEBHOOK_URL != '' }}
           HYROX_STATE_FILE: .monitor-cache/monitor.state.json
+          HYROX_LOG_FILE: .monitor-cache/monitor.log
+          HYROX_ERROR_NOTIFIED_FILE: .monitor-cache/error-notified
         run: npm run check:now
+
+      - name: Notify workflow failure
+        if: failure()
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          if [ -f .monitor-cache/error-notified ]; then
+            echo "Monitor script already sent a Discord error notification."
+            exit 0
+          fi
+
+          if [ -z "$DISCORD_WEBHOOK_URL" ]; then
+            echo "No Discord webhook secret configured; skipping failure notification."
+            exit 0
+          fi
+
+          MESSAGE="HYROX ticket monitor workflow failed outside the monitor script.
+GitHub run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          export MESSAGE
+
+          curl --fail-with-body \
+            -H "Content-Type: application/json" \
+            -d "$(node -e 'process.stdout.write(JSON.stringify({ content: process.env.MESSAGE }))')" \
+            "$DISCORD_WEBHOOK_URL"
+
+      - name: Upload monitor diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: monitor-diagnostics
+          path: .monitor-cache
+          if-no-files-found: ignore

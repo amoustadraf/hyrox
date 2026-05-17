@@ -8,6 +8,11 @@ const args = new Set(process.argv.slice(2));
 const dryRun = args.has("--dry-run");
 const force = args.has("--force") || dryRun;
 const notifyTest = args.has("--notify-test");
+const defaultState = {
+  lastCheckedAt: null,
+  activeAthleteTicketIds: [],
+  activeAthleteTickets: []
+};
 
 if (args.has("--help")) {
   console.log(`
@@ -43,8 +48,21 @@ async function loadJson(filePath, fallback) {
 }
 
 async function writeJson(filePath, value) {
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
   const raw = `${JSON.stringify(value, null, 2)}\n`;
   await fs.writeFile(filePath, raw, "utf8");
+}
+
+function serializeError(error) {
+  return {
+    name: error?.name || "Error",
+    message: error?.message || String(error),
+    stack: error?.stack || null
+  };
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function loadDotEnv() {
@@ -143,6 +161,78 @@ function resolveStateFile(config) {
     : path.join(__dirname, configuredPath);
 }
 
+function resolveLogFile(config) {
+  const configuredPath = process.env.HYROX_LOG_FILE || config.monitoring.logFile || "monitor.log";
+  return path.isAbsolute(configuredPath)
+    ? configuredPath
+    : path.join(__dirname, configuredPath);
+}
+
+function resolveErrorNotifiedFile(config) {
+  const configuredPath = process.env.HYROX_ERROR_NOTIFIED_FILE;
+  if (!configuredPath) return null;
+
+  return path.isAbsolute(configuredPath)
+    ? configuredPath
+    : path.join(__dirname, configuredPath);
+}
+
+async function appendLog(config, level, message, details = {}) {
+  const entry = {
+    at: new Date().toISOString(),
+    level,
+    message,
+    ...details
+  };
+  const line = `${JSON.stringify(entry)}\n`;
+
+  try {
+    const logFile = resolveLogFile(config);
+    await fs.mkdir(path.dirname(logFile), { recursive: true });
+    await fs.appendFile(logFile, line, "utf8");
+  } catch (logError) {
+    console.error("Failed to write monitor log:", logError.message);
+  }
+}
+
+async function markErrorNotified(config) {
+  const markerFile = resolveErrorNotifiedFile(config);
+  if (!markerFile) return;
+
+  try {
+    await fs.mkdir(path.dirname(markerFile), { recursive: true });
+    await fs.writeFile(markerFile, new Date().toISOString(), "utf8");
+  } catch (error) {
+    console.error("Failed to write error notification marker:", error.message);
+  }
+}
+
+async function withRetries(config, label, operation) {
+  const attempts = Math.max(1, config.monitoring.retryAttempts || 1);
+  const delayMs = Math.max(0, config.monitoring.retryDelaySeconds || 0) * 1000;
+  let lastError;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await operation(attempt);
+    } catch (error) {
+      lastError = error;
+      await appendLog(config, "warn", `${label} failed`, {
+        attempt,
+        attempts,
+        error: serializeError(error)
+      });
+
+      if (attempt < attempts && delayMs > 0) {
+        console.warn(`${label} failed on attempt ${attempt}/${attempts}; retrying.`);
+        await sleep(delayMs);
+      }
+    }
+  }
+
+  throw lastError;
+}
+
 function isPriorityTicket(ticket, prioritySignals) {
   return prioritySignals.some((signal) => {
     if (signal.competitionClass && ticket.competitionClass !== signal.competitionClass) {
@@ -217,7 +307,7 @@ function buildDiscordMessage({ config, event, newTickets, priorityTickets }) {
 }
 
 async function sendDiscordMessage(config, content) {
-  const discord = config.notifications?.discord;
+  const discord = config.notifications?.discord || {};
   const webhookUrl = process.env[discord.webhookUrlEnvVar || "DISCORD_WEBHOOK_URL"];
   const enabledOverride = readBooleanEnv("DISCORD_ENABLED");
   const enabled = enabledOverride ?? discord?.enabled ?? false;
@@ -246,6 +336,67 @@ async function sendDiscordMessage(config, content) {
   return true;
 }
 
+function getGitHubRunUrl() {
+  const serverUrl = process.env.GITHUB_SERVER_URL;
+  const repository = process.env.GITHUB_REPOSITORY;
+  const runId = process.env.GITHUB_RUN_ID;
+
+  if (!serverUrl || !repository || !runId) return null;
+  return `${serverUrl}/${repository}/actions/runs/${runId}`;
+}
+
+function buildMonitorErrorMessage(config, error, context = {}) {
+  const runUrl = getGitHubRunUrl();
+  const serialized = serializeError(error);
+  const lines = [
+    "HYROX ticket monitor problem after retries.",
+    `Stage: ${context.stage || "unknown"}`,
+    `Error: ${serialized.name}: ${serialized.message}`,
+    "",
+    config.event?.ticketPageUrl || ""
+  ];
+
+  if (runUrl) {
+    lines.push("");
+    lines.push(`GitHub run: ${runUrl}`);
+  }
+
+  return lines.filter(Boolean).join("\n").slice(0, 1900);
+}
+
+async function notifyMonitorError(config, error, context = {}) {
+  const message = buildMonitorErrorMessage(config, error, context);
+
+  try {
+    const sent = await sendDiscordMessage(config, message);
+    console.log(sent ? "Discord error notification sent." : "Discord error notification disabled.");
+    if (sent) {
+      await markErrorNotified(config);
+    }
+  } catch (notificationError) {
+    console.error("Failed to send Discord error notification:", notificationError.message);
+  }
+}
+
+async function recordMonitorError(config, state, error, context = {}) {
+  const stateFile = resolveStateFile(config);
+  const nextState = {
+    ...defaultState,
+    ...state,
+    lastErrorAt: new Date().toISOString(),
+    lastError: {
+      stage: context.stage || "unknown",
+      ...serializeError(error)
+    }
+  };
+
+  await writeJson(stateFile, nextState);
+  await appendLog(config, "error", "Monitor failed", {
+    stage: context.stage || "unknown",
+    error: serializeError(error)
+  });
+}
+
 function shouldSkipForInterval(state, config) {
   if (force || !state.lastCheckedAt) return false;
 
@@ -264,11 +415,7 @@ async function main() {
 
   const config = await loadJson(CONFIG_FILE);
   const stateFile = resolveStateFile(config);
-  const state = await loadJson(stateFile, {
-    lastCheckedAt: null,
-    activeAthleteTicketIds: [],
-    activeAthleteTickets: []
-  });
+  const state = await loadJson(stateFile, defaultState);
 
   if (notifyTest) {
     const sent = await sendDiscordMessage(
@@ -286,13 +433,16 @@ async function main() {
     return;
   }
 
-  const html = await fetchText(config.event.ticketPageUrl, config);
-  const nextData = extractNextData(html);
-  const event = nextData.props?.pageProps?.event;
+  const event = await withRetries(config, "Fetch and validate ticket page", async () => {
+    const nextData = extractNextData(await fetchText(config.event.ticketPageUrl, config));
+    const pageEvent = nextData.props?.pageProps?.event;
 
-  if (!event || !Array.isArray(event.tickets)) {
-    throw new Error("Could not find event.tickets in the page JSON.");
-  }
+    if (!pageEvent || !Array.isArray(pageEvent.tickets)) {
+      throw new Error("Could not find event.tickets in the page JSON.");
+    }
+
+    return pageEvent;
+  });
 
   const activeTickets = filterInterestingTickets(event.tickets, config);
   const previousActiveIds = new Set(state.activeAthleteTicketIds || []);
@@ -362,11 +512,50 @@ async function main() {
     return;
   }
 
-  const sent = await sendDiscordMessage(config, message);
+  const sent = await withRetries(config, "Send Discord ticket notification", () =>
+    sendDiscordMessage(config, message)
+  );
   console.log(sent ? "Discord notification sent." : "Discord notification disabled.");
 }
 
-main().catch(async (error) => {
+async function run() {
+  let config = null;
+  let state = defaultState;
+  let stage = "startup";
+
+  try {
+    await loadDotEnv();
+    config = await loadJson(CONFIG_FILE);
+    state = await loadJson(resolveStateFile(config), defaultState);
+    stage = "monitor";
+    await main();
+  } catch (error) {
+    console.error(error.stack || error.message || error);
+
+    if (config && !dryRun) {
+      try {
+        let latestState = state;
+
+        try {
+          latestState = await loadJson(resolveStateFile(config), state);
+        } catch (stateError) {
+          console.error("Could not reload state while handling error:", stateError.message);
+        }
+
+        await recordMonitorError(config, latestState, error, { stage });
+        await notifyMonitorError(config, error, { stage });
+      } catch (handlingError) {
+        console.error("Failed while handling monitor error:", handlingError.stack || handlingError.message || handlingError);
+      }
+    } else if (dryRun) {
+      console.error("Dry run only; error state and Discord error notification were not written.");
+    }
+
+    process.exitCode = 1;
+  }
+}
+
+run().catch(async (error) => {
   console.error(error.stack || error.message || error);
   process.exitCode = 1;
 });

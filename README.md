@@ -2,6 +2,8 @@
 
 This checks the HYROX Toronto 2026 ticket page, reads the embedded ticket JSON, and stores the last active non-charity athlete tickets in `monitor.state.json`.
 
+The monitor retries transient failures, writes issue details to `monitor.log`, records the latest error in `monitor.state.json`, and sends Discord error notifications when Discord is configured.
+
 ## Commands
 
 ```powershell
@@ -50,3 +52,5 @@ To use Discord in GitHub Actions:
 After the first run writes its baseline, later runs send Discord only when a new active non-charity athlete ticket appears. Open Men is marked as priority.
 
 Pushes to `main` also run the workflow as a sanity check. If a commit message contains `[discord-test]`, the workflow sends a Discord smoke-test message instead of checking tickets.
+
+If the monitor script fails after retries, it sends Discord with the failed stage and GitHub run URL. If the workflow fails before the script can run, the final workflow step sends a separate Discord failure message. Failed workflow runs also upload `.monitor-cache` as a diagnostics artifact when available.
