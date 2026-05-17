@@ -369,8 +369,11 @@ function buildMonitorErrorMessage(config, error, context = {}) {
 
 function buildWorkflowFailureMessage(config) {
   const runUrl = getGitHubRunUrl();
+  const headline = runUrl
+    ? "HYROX ticket monitor workflow failed outside the monitor script."
+    : "TEST: HYROX ticket monitor workflow-failure notification.";
   const lines = [
-    "HYROX ticket monitor workflow failed outside the monitor script.",
+    headline,
     config.event?.ticketPageUrl || ""
   ];
 
