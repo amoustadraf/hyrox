@@ -1,6 +1,11 @@
-# HYROX Toronto Ticket Monitor
+# HYROX Ticket Monitor
 
-This checks the HYROX Toronto 2026 ticket page, reads the embedded ticket JSON, and stores the last active non-charity athlete tickets in `monitor.state.json`.
+This checks the configured HYROX ticket pages, reads the embedded ticket JSON, and stores the last active non-charity athlete tickets in `monitor.state.json`.
+
+Configured events:
+
+- GoodLife HYROX Toronto | Season 26/27
+- HYROX Chiba | Season 26/27
 
 The monitor retries transient failures, writes issue details to `monitor.log`, records the latest error in `monitor.state.json`, and sends Discord error notifications when Discord is configured.
 
@@ -14,7 +19,7 @@ npm run check
 
 `check:now` always checks. `check` respects `minimumMinutesBetweenChecks` from `monitor.config.json`.
 
-The first real run writes a baseline and does not send an alert. Later runs alert only when a new active non-charity athlete ticket appears. Open Men (`SOLO_OPEN_M`) is marked as priority.
+The first real run for each event writes a baseline and does not send an alert. Later runs alert only when a new active non-charity athlete ticket appears. Open Men (`SOLO_OPEN_M`) is marked as priority.
 
 ## Discord
 
@@ -41,7 +46,7 @@ Use every 45-60 minutes when actively watching for returned tickets. Twice daily
 
 The repository includes `.github/workflows/hyrox-ticket-monitor.yml`.
 
-That workflow runs hourly from about 7:17 AM to 11:17 PM Toronto time during daylight time. GitHub cron schedules are UTC, so the workflow uses UTC cron entries that match the October 2026 event window. It keeps `monitor.state.json` in the GitHub Actions cache so the workflow can compare the current page against the previous run without committing state files to the repo.
+That workflow runs hourly. GitHub cron schedules are UTC, and a simple hourly schedule keeps both Toronto and Chiba covered without mapping separate event time zones. It keeps `monitor.state.json` in the GitHub Actions cache so the workflow can compare each current page against the previous run without committing state files to the repo.
 
 To use Discord in GitHub Actions:
 
@@ -49,7 +54,7 @@ To use Discord in GitHub Actions:
 2. Go to Settings -> Secrets and variables -> Actions.
 3. Add a repository secret named `DISCORD_WEBHOOK_URL`.
 
-After the first run writes its baseline, later runs send Discord only when a new active non-charity athlete ticket appears. Open Men is marked as priority.
+After the first run for an event writes its baseline, later runs send Discord only when a new active non-charity athlete ticket appears. Open Men is marked as priority.
 
 Pushes to `main` also run the workflow as a sanity check. If a commit message contains `[discord-test]`, the workflow sends a Discord smoke-test message instead of checking tickets.
 

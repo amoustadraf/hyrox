@@ -6,10 +6,9 @@ on:
     branches:
       - main
   schedule:
-    # GitHub schedules use UTC. These approximate 7:17 AM-11:17 PM Toronto
-    # during daylight time, which covers the October 2026 event window.
-    - cron: "17 11-23 * * *"
-    - cron: "17 0-3 * * *"
+    # GitHub schedules use UTC. One hourly check keeps both Toronto and Chiba
+    # covered without trying to map two event time zones.
+    - cron: "17 * * * *"
 
 concurrency:
   group: hyrox-ticket-monitor

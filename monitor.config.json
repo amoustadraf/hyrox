@@ -1,14 +1,28 @@
 {
-  "event": {
-    "name": "GoodLife HYROX Toronto | Season 26/27",
-    "officialEventPageUrl": "https://hyrox.com/event/goodlife-hyrox-toronto-26-27/",
-    "ticketPageUrl": "https://ca.hyrox.com/event/hyrox-toronto-season-26-27-3bsreb",
-    "eventDates": {
-      "start": "2026-10-01",
-      "end": "2026-10-04",
-      "timezone": "America/Toronto"
+  "events": [
+    {
+      "key": "toronto",
+      "name": "GoodLife HYROX Toronto | Season 26/27",
+      "officialEventPageUrl": "https://hyrox.com/event/goodlife-hyrox-toronto-26-27/",
+      "ticketPageUrl": "https://ca.hyrox.com/event/hyrox-toronto-season-26-27-3bsreb",
+      "eventDates": {
+        "start": "2026-10-01",
+        "end": "2026-10-04",
+        "timezone": "America/Toronto"
+      }
+    },
+    {
+      "key": "chiba",
+      "name": "HYROX Chiba | Season 26/27",
+      "officialEventPageUrl": "https://hyrox.com/event/hyrox-chiba/",
+      "ticketPageUrl": "https://japan.hyrox.com/event/hyrox-chiba-season-26-27-qzyubs?useEmbed=true",
+      "eventDates": {
+        "start": "2026-08-06",
+        "end": "2026-08-09",
+        "timezone": "Asia/Tokyo"
+      }
     }
-  },
+  ],
   "monitoring": {
     "mode": "structured_page_json",
     "userAgent": "Mozilla/5.0 hyrox-ticket-monitor/1.0",

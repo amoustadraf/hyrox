@@ -9,10 +9,14 @@ const dryRun = args.has("--dry-run");
 const force = args.has("--force") || dryRun;
 const notifyTest = args.has("--notify-test");
 const workflowFailureNotify = args.has("--workflow-failure-notify");
-const defaultState = {
+const defaultEventState = {
   lastCheckedAt: null,
   activeAthleteTicketIds: [],
   activeAthleteTickets: []
+};
+const defaultState = {
+  lastCheckedAt: null,
+  events: {}
 };
 
 if (args.has("--help")) {
@@ -33,6 +37,55 @@ function getNestedValue(object, dottedPath) {
     if (value === null || value === undefined) return undefined;
     return value[key];
   }, object);
+}
+
+function slugify(value) {
+  return String(value || "event")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60) || "event";
+}
+
+function getConfiguredEvents(config) {
+  const events = Array.isArray(config.events) && config.events.length > 0
+    ? config.events
+    : [config.event].filter(Boolean);
+
+  return events.map((eventConfig, index) => ({
+    ...eventConfig,
+    key: eventConfig.key || slugify(eventConfig.name || eventConfig.ticketPageUrl || index)
+  }));
+}
+
+function getEventState(state, eventConfig) {
+  if (state.events?.[eventConfig.key]) {
+    return state.events[eventConfig.key];
+  }
+
+  // Backward compatibility for the original one-event Toronto state shape.
+  if (
+    eventConfig.key === "toronto" &&
+    Array.isArray(state.activeAthleteTicketIds)
+  ) {
+    return {
+      lastCheckedAt: state.lastCheckedAt || null,
+      eventName: state.eventName,
+      eventId: state.eventId,
+      ticketPageUrl: state.ticketPageUrl,
+      activeAthleteTicketIds: state.activeAthleteTicketIds,
+      activeAthleteTickets: state.activeAthleteTickets || [],
+      lastResult: state.lastResult
+    };
+  }
+
+  return { ...defaultEventState };
+}
+
+function getEventUrls(config) {
+  return getConfiguredEvents(config)
+    .map((eventConfig) => eventConfig.ticketPageUrl)
+    .filter(Boolean);
 }
 
 async function exists(filePath) {
@@ -282,16 +335,17 @@ function formatTicket(ticket) {
   return `${ticket.name} (${ticket.competitionClass || "unknown class"}, ${date})`;
 }
 
-function buildDiscordMessage({ config, event, newTickets, priorityTickets }) {
+function buildDiscordMessage({ config, eventConfig, event, newTickets, priorityTickets }) {
   const lines = [];
   const discord = config.notifications?.discord || {};
+  const eventName = event?.name || eventConfig.name || "HYROX event";
 
   if (priorityTickets.length > 0) {
     const priorityPrefix =
       config.ticketFilter.prioritySignals?.[0]?.discordMessagePrefix ||
       "PRIORITY ticket available";
     const mention = discord.priorityMention ? `${discord.priorityMention} ` : "";
-    lines.push(`${mention}${priorityPrefix}`);
+    lines.push(`${mention}${priorityPrefix}: ${eventName}`);
     for (const ticket of priorityTickets) {
       lines.push(`- ${formatTicket(ticket)}`);
     }
@@ -299,12 +353,12 @@ function buildDiscordMessage({ config, event, newTickets, priorityTickets }) {
   }
 
   const mention = discord.mention && priorityTickets.length === 0 ? `${discord.mention} ` : "";
-  lines.push(`${mention}HYROX Toronto athlete ticket change detected.`);
+  lines.push(`${mention}${eventName} athlete ticket change detected.`);
   for (const ticket of newTickets) {
     lines.push(`- ${formatTicket(ticket)}`);
   }
   lines.push("");
-  lines.push(config.event.ticketPageUrl);
+  lines.push(eventConfig.ticketPageUrl);
 
   return lines.join("\n").slice(0, 1900);
 }
@@ -355,9 +409,10 @@ function buildMonitorErrorMessage(config, error, context = {}) {
     "HYROX ticket monitor problem after retries.",
     `Stage: ${context.stage || "unknown"}`,
     `Error: ${serialized.name}: ${serialized.message}`,
-    "",
-    config.event?.ticketPageUrl || ""
+    ""
   ];
+
+  lines.push(...getEventUrls(config));
 
   if (runUrl) {
     lines.push("");
@@ -373,9 +428,10 @@ function buildWorkflowFailureMessage(config) {
     ? "HYROX ticket monitor workflow failed outside the monitor script."
     : "TEST: HYROX ticket monitor workflow-failure notification.";
   const lines = [
-    headline,
-    config.event?.ticketPageUrl || ""
+    headline
   ];
+
+  lines.push(...getEventUrls(config));
 
   if (runUrl) {
     lines.push("");
@@ -441,7 +497,7 @@ async function main() {
   if (notifyTest) {
     const sent = await sendDiscordMessage(
       config,
-      `HYROX ticket monitor test notification\n${config.event.ticketPageUrl}`
+      `HYROX ticket monitor test notification\n${getEventUrls(config).join("\n")}`
     );
     console.log(sent ? "Sent Discord test notification." : "Discord notification disabled.");
     return;
@@ -460,89 +516,119 @@ async function main() {
     return;
   }
 
-  const event = await withRetries(config, "Fetch and validate ticket page", async () => {
-    const nextData = extractNextData(await fetchText(config.event.ticketPageUrl, config));
-    const pageEvent = nextData.props?.pageProps?.event;
-
-    if (!pageEvent || !Array.isArray(pageEvent.tickets)) {
-      throw new Error("Could not find event.tickets in the page JSON.");
-    }
-
-    return pageEvent;
-  });
-
-  const activeTickets = filterInterestingTickets(event.tickets, config);
-  const previousActiveIds = new Set(state.activeAthleteTicketIds || []);
-  const newTickets = activeTickets.filter((ticket) => !previousActiveIds.has(ticket.id));
-  const firstRun = !state.lastCheckedAt;
-  const priorityTickets = newTickets.filter((ticket) =>
-    isPriorityTicket(ticket, config.ticketFilter.prioritySignals || [])
-  );
-
+  const configuredEvents = getConfiguredEvents(config);
+  const checkedAt = new Date().toISOString();
   const nextState = {
-    lastCheckedAt: new Date().toISOString(),
-    eventName: event.name,
-    eventId: event._id,
-    ticketPageUrl: config.event.ticketPageUrl,
-    activeAthleteTicketIds: activeTickets.map((ticket) => ticket.id),
-    activeAthleteTickets: activeTickets,
-    lastResult: {
-      pageTicketCount: event.tickets.length,
-      activeMatchedTicketCount: activeTickets.length,
-      newMatchedTicketCount: firstRun ? 0 : newTickets.length,
-      priorityNewMatchedTicketCount: firstRun ? 0 : priorityTickets.length
-    }
+    events: {
+      ...(state.events || {})
+    },
+    lastCheckedAt: checkedAt
   };
+
+  if (state.lastErrorAt) {
+    nextState.lastErrorAt = state.lastErrorAt;
+  }
+
+  if (state.lastError) {
+    nextState.lastError = state.lastError;
+  }
+  const alertMessages = [];
+
+  for (const eventConfig of configuredEvents) {
+    const eventState = getEventState(state, eventConfig);
+    const event = await withRetries(config, `Fetch and validate ${eventConfig.name}`, async () => {
+      const nextData = extractNextData(await fetchText(eventConfig.ticketPageUrl, config));
+      const pageEvent = nextData.props?.pageProps?.event;
+
+      if (!pageEvent || !Array.isArray(pageEvent.tickets)) {
+        throw new Error(`Could not find event.tickets in the page JSON for ${eventConfig.name}.`);
+      }
+
+      return pageEvent;
+    });
+
+    const activeTickets = filterInterestingTickets(event.tickets, config);
+    const previousActiveIds = new Set(eventState.activeAthleteTicketIds || []);
+    const newTickets = activeTickets.filter((ticket) => !previousActiveIds.has(ticket.id));
+    const firstRun = !eventState.lastCheckedAt;
+    const priorityTickets = newTickets.filter((ticket) =>
+      isPriorityTicket(ticket, config.ticketFilter.prioritySignals || [])
+    );
+
+    nextState.events[eventConfig.key] = {
+      lastCheckedAt: checkedAt,
+      eventName: event.name,
+      eventId: event._id,
+      ticketPageUrl: eventConfig.ticketPageUrl,
+      activeAthleteTicketIds: activeTickets.map((ticket) => ticket.id),
+      activeAthleteTickets: activeTickets,
+      lastResult: {
+        pageTicketCount: event.tickets.length,
+        activeMatchedTicketCount: activeTickets.length,
+        newMatchedTicketCount: firstRun ? 0 : newTickets.length,
+        priorityNewMatchedTicketCount: firstRun ? 0 : priorityTickets.length
+      }
+    };
+
+    console.log(`Checked ${event.name}.`);
+    console.log(`Page ticket types: ${event.tickets.length}`);
+    console.log(`Active non-charity athlete tickets: ${activeTickets.length}`);
+
+    if (activeTickets.length > 0) {
+      for (const ticket of activeTickets) {
+        console.log(`- ${formatTicket(ticket)}`);
+      }
+    }
+
+    if (firstRun) {
+      console.log(dryRun ? "Dry run only; no baseline state written for this event." : "Baseline saved for this event; no alert sent on first run.");
+      continue;
+    }
+
+    if (newTickets.length === 0) {
+      console.log("No new active athlete tickets for this event since the last run.");
+      continue;
+    }
+
+    const message = buildDiscordMessage({
+      config,
+      eventConfig,
+      event,
+      newTickets,
+      priorityTickets
+    });
+
+    console.log("New active athlete tickets detected:");
+    for (const ticket of newTickets) {
+      const priority = priorityTickets.some((priorityTicket) => priorityTicket.id === ticket.id)
+        ? " PRIORITY"
+        : "";
+      console.log(`- ${formatTicket(ticket)}${priority}`);
+    }
+
+    alertMessages.push(message);
+  }
 
   if (!dryRun) {
     await writeJson(stateFile, nextState);
   }
 
-  console.log(`Checked ${event.name}.`);
-  console.log(`Page ticket types: ${event.tickets.length}`);
-  console.log(`Active non-charity athlete tickets: ${activeTickets.length}`);
-
-  if (activeTickets.length > 0) {
-    for (const ticket of activeTickets) {
-      console.log(`- ${formatTicket(ticket)}`);
-    }
-  }
-
-  if (firstRun) {
-    console.log(dryRun ? "Dry run only; no baseline state written." : "Baseline saved; no alert sent on first run.");
+  if (alertMessages.length === 0) {
     return;
-  }
-
-  if (newTickets.length === 0) {
-    console.log("No new active athlete tickets since the last run.");
-    return;
-  }
-
-  const message = buildDiscordMessage({
-    config,
-    event,
-    newTickets,
-    priorityTickets
-  });
-
-  console.log("New active athlete tickets detected:");
-  for (const ticket of newTickets) {
-    const priority = priorityTickets.some((priorityTicket) => priorityTicket.id === ticket.id)
-      ? " PRIORITY"
-      : "";
-    console.log(`- ${formatTicket(ticket)}${priority}`);
   }
 
   if (dryRun) {
     console.log("Dry run only; Discord notification not sent.");
-    console.log(message);
+    console.log(alertMessages.join("\n\n---\n\n"));
     return;
   }
 
-  const sent = await withRetries(config, "Send Discord ticket notification", () =>
-    sendDiscordMessage(config, message)
-  );
-  console.log(sent ? "Discord notification sent." : "Discord notification disabled.");
+  for (const message of alertMessages) {
+    const sent = await withRetries(config, "Send Discord ticket notification", () =>
+      sendDiscordMessage(config, message)
+    );
+    console.log(sent ? "Discord notification sent." : "Discord notification disabled.");
+  }
 }
 
 async function run() {
