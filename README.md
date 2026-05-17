@@ -1,6 +1,6 @@
 # HYROX Ticket Monitor
 
-This checks the configured HYROX ticket pages, reads the embedded ticket JSON, and stores the last active non-charity athlete tickets in `monitor.state.json`.
+This checks the configured HYROX ticket pages, reads the checkout availability JSON, and stores the last available non-charity athlete tickets in `monitor.state.json`.
 
 Configured events:
 
@@ -19,7 +19,7 @@ npm run check
 
 `check:now` always checks. `check` respects `minimumMinutesBetweenChecks` from `monitor.config.json`.
 
-The first real run for each event writes a baseline and does not send an alert. Later runs alert only when a new active non-charity athlete ticket appears. Open Men (`SOLO_OPEN_M`) is marked as priority.
+The first real run for each event writes a baseline and does not send an alert. Later runs alert only when a new available non-charity athlete ticket appears. Open Men (`SOLO_OPEN_M`) is marked as priority.
 
 ## Discord
 
@@ -54,7 +54,7 @@ To use Discord in GitHub Actions:
 2. Go to Settings -> Secrets and variables -> Actions.
 3. Add a repository secret named `DISCORD_WEBHOOK_URL`.
 
-After the first run for an event writes its baseline, later runs send Discord only when a new active non-charity athlete ticket appears. Open Men is marked as priority.
+After the first run for an event writes its baseline, later runs send Discord only when a new available non-charity athlete ticket appears. Open Men is marked as priority.
 
 Pushes to `main` also run the workflow as a sanity check. If a commit message contains `[discord-test]`, the workflow sends a Discord smoke-test message instead of checking tickets.
 

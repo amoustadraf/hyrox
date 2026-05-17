@@ -9,6 +9,7 @@ const dryRun = args.has("--dry-run");
 const force = args.has("--force") || dryRun;
 const notifyTest = args.has("--notify-test");
 const workflowFailureNotify = args.has("--workflow-failure-notify");
+const AVAILABILITY_DETECTOR_VERSION = 2;
 const defaultEventState = {
   lastCheckedAt: null,
   activeAthleteTicketIds: [],
@@ -184,16 +185,76 @@ function extractNextData(html) {
   return JSON.parse(match[1]);
 }
 
-function normalizeTicket(ticket) {
+function getTicketId(ticket) {
+  return ticket.id || ticket._id;
+}
+
+function getEventCategory(event, ticket) {
+  return (event.categories || []).find((category) => category.ref === ticket.categoryRef);
+}
+
+function volumeOrFallback(value, fallback) {
+  if (typeof value !== "number" || Number.isNaN(value)) return fallback;
+  return Math.max(value, 0);
+}
+
+function getTicketAvailability(ticket, event) {
+  const category = getEventCategory(event, ticket);
+  const ticketVolume = volumeOrFallback(ticket.v, 0);
+  const categoryVolume = category ? volumeOrFallback(category.v, 0) : 0;
+  const eventVolume = volumeOrFallback(event.v, Infinity);
+  const ticketOrderMax = volumeOrFallback(ticket.maxAmountPerOrder, Infinity);
+  const categoryOrderMax = volumeOrFallback(category?.maxAmountPerOrder, Infinity);
+  const eventOrderMax = volumeOrFallback(event.max, Infinity);
+  const minOrderAmount = volumeOrFallback(ticket.minAmountPerOrder, 0);
+  const minOrderRule = volumeOrFallback(ticket.minAmountPerOrderRule, 0);
+  let quantity = Math.min(
+    ticketVolume,
+    categoryVolume,
+    eventVolume,
+    ticketOrderMax,
+    categoryOrderMax,
+    eventOrderMax
+  );
+
+  if (minOrderRule <= 1 && quantity < minOrderAmount) {
+    quantity = 0;
+  }
+
+  const blockedByRules =
+    ticket.conditionalAvailability === true &&
+    ticket.conditionalAvailabilityMode === "blockAddToCart" &&
+    Array.isArray(ticket.rules) &&
+    ticket.rules.length > 0;
+
   return {
-    id: ticket._id,
+    quantity,
+    blockedByRules,
+    ticketVolume,
+    categoryVolume: Number.isFinite(categoryVolume) ? categoryVolume : null,
+    eventVolume: Number.isFinite(eventVolume) ? eventVolume : null,
+    categoryName: category?.name || null
+  };
+}
+
+function normalizeTicket(ticket, event) {
+  const availability = getTicketAvailability(ticket, event);
+
+  return {
+    id: getTicketId(ticket),
     name: ticket.name,
     active: ticket.active === true,
     hidden: ticket.styleOptions?.hiddenInSelectionArea === true,
     isCompetition: ticket.meta?.is_competition,
     competitionClass: ticket.meta?.competition_class_matching_key,
-    competitionDayIndex: ticket.meta?.competion_day_idx,
-    date: ticket.relevancyDate?.start || null
+    competitionDayIndex: ticket.meta?.competition_day_idx,
+    date: ticket.relevancyDate?.start || null,
+    availableQuantity: availability.quantity,
+    buyable:
+      ticket.active === true &&
+      availability.quantity > 0 &&
+      availability.blockedByRules === false,
+    availability
   };
 }
 
@@ -310,15 +371,16 @@ function isPriorityTicket(ticket, prioritySignals) {
   });
 }
 
-function filterInterestingTickets(rawTickets, config) {
+function filterInterestingTickets(rawTickets, config, event) {
   const filter = config.ticketFilter;
   const ignoredNames = filter.ignoreNamesContaining || [];
   const excludedClasses = new Set(filter.excludedCompetitionClasses || []);
-  const availableField = filter.availableWhen?.field || "active";
+  const availableField = filter.availableWhen?.field || "buyable";
   const availableValue = filter.availableWhen?.equals ?? true;
 
   return rawTickets
-    .map(normalizeTicket)
+    .map((ticket) => normalizeTicket(ticket, event))
+    .filter((ticket) => ticket.id)
     .filter((ticket) => !ticket.hidden)
     .filter((ticket) => !ticketNameHasAny(ticket, ignoredNames))
     .filter((ticket) => {
@@ -332,7 +394,11 @@ function filterInterestingTickets(rawTickets, config) {
 
 function formatTicket(ticket) {
   const date = ticket.date ? ticket.date.slice(0, 10) : "unknown date";
-  return `${ticket.name} (${ticket.competitionClass || "unknown class"}, ${date})`;
+  const available =
+    typeof ticket.availableQuantity === "number"
+      ? `, ${ticket.availableQuantity} available`
+      : "";
+  return `${ticket.name} (${ticket.competitionClass || "unknown class"}, ${date}${available})`;
 }
 
 function buildDiscordMessage({ config, eventConfig, event, newTickets, priorityTickets }) {
@@ -353,7 +419,7 @@ function buildDiscordMessage({ config, eventConfig, event, newTickets, priorityT
   }
 
   const mention = discord.mention && priorityTickets.length === 0 ? `${discord.mention} ` : "";
-  lines.push(`${mention}${eventName} athlete ticket change detected.`);
+  lines.push(`${mention}${eventName} available athlete ticket change detected.`);
   for (const ticket of newTickets) {
     lines.push(`- ${formatTicket(ticket)}`);
   }
@@ -420,6 +486,34 @@ function buildMonitorErrorMessage(config, error, context = {}) {
   }
 
   return lines.filter(Boolean).join("\n").slice(0, 1900);
+}
+
+function deriveCheckoutPageUrl(eventConfig, event) {
+  if (eventConfig.checkoutPageUrl) return eventConfig.checkoutPageUrl;
+
+  const eventId = event?._id || event?.id;
+  if (!eventId) {
+    throw new Error(`Could not derive checkout URL because ${eventConfig.name} has no event ID.`);
+  }
+
+  const ticketPage = new URL(eventConfig.ticketPageUrl);
+  const checkoutPage = new URL(`/checkout/${eventId}`, ticketPage);
+  checkoutPage.search = ticketPage.search;
+  return checkoutPage.href;
+}
+
+function validateEventTickets(event, eventConfig, sourceLabel) {
+  if (!event || !Array.isArray(event.tickets)) {
+    throw new Error(`Could not find event.tickets in the ${sourceLabel} JSON for ${eventConfig.name}.`);
+  }
+}
+
+function validateCheckoutAvailability(event, eventConfig) {
+  validateEventTickets(event, eventConfig, "checkout page");
+
+  if (!event.tickets.some((ticket) => Object.prototype.hasOwnProperty.call(ticket, "v"))) {
+    throw new Error(`Could not find checkout ticket availability volumes for ${eventConfig.name}.`);
+  }
 }
 
 function buildWorkflowFailureMessage(config) {
@@ -536,20 +630,38 @@ async function main() {
 
   for (const eventConfig of configuredEvents) {
     const eventState = getEventState(state, eventConfig);
-    const event = await withRetries(config, `Fetch and validate ${eventConfig.name}`, async () => {
+    const pageEvent = await withRetries(config, `Fetch event page for ${eventConfig.name}`, async () => {
       const nextData = extractNextData(await fetchText(eventConfig.ticketPageUrl, config));
       const pageEvent = nextData.props?.pageProps?.event;
 
-      if (!pageEvent || !Array.isArray(pageEvent.tickets)) {
-        throw new Error(`Could not find event.tickets in the page JSON for ${eventConfig.name}.`);
-      }
+      validateEventTickets(pageEvent, eventConfig, "event page");
 
       return pageEvent;
     });
+    const checkoutPageUrl = deriveCheckoutPageUrl(eventConfig, pageEvent);
+    const checkoutEvent = await withRetries(config, `Fetch checkout availability for ${eventConfig.name}`, async () => {
+      const nextData = extractNextData(await fetchText(checkoutPageUrl, config));
+      const pageEvent = nextData.props?.pageProps?.event;
 
-    const activeTickets = filterInterestingTickets(event.tickets, config);
-    const previousActiveIds = new Set(eventState.activeAthleteTicketIds || []);
-    const newTickets = activeTickets.filter((ticket) => !previousActiveIds.has(ticket.id));
+      validateCheckoutAvailability(pageEvent, eventConfig);
+
+      return pageEvent;
+    });
+    const event = {
+      ...pageEvent,
+      ...checkoutEvent,
+      tickets: checkoutEvent.tickets,
+      categories: checkoutEvent.categories || pageEvent.categories || []
+    };
+
+    const availableTickets = filterInterestingTickets(event.tickets, config, event);
+    const detectorChanged =
+      !!eventState.lastCheckedAt &&
+      eventState.availabilityDetectorVersion !== AVAILABILITY_DETECTOR_VERSION;
+    const previousActiveIds = new Set(
+      detectorChanged ? [] : eventState.activeAthleteTicketIds || []
+    );
+    const newTickets = availableTickets.filter((ticket) => !previousActiveIds.has(ticket.id));
     const firstRun = !eventState.lastCheckedAt;
     const priorityTickets = newTickets.filter((ticket) =>
       isPriorityTicket(ticket, config.ticketFilter.prioritySignals || [])
@@ -560,11 +672,13 @@ async function main() {
       eventName: event.name,
       eventId: event._id,
       ticketPageUrl: eventConfig.ticketPageUrl,
-      activeAthleteTicketIds: activeTickets.map((ticket) => ticket.id),
-      activeAthleteTickets: activeTickets,
+      checkoutPageUrl,
+      availabilityDetectorVersion: AVAILABILITY_DETECTOR_VERSION,
+      activeAthleteTicketIds: availableTickets.map((ticket) => ticket.id),
+      activeAthleteTickets: availableTickets,
       lastResult: {
         pageTicketCount: event.tickets.length,
-        activeMatchedTicketCount: activeTickets.length,
+        availableMatchedTicketCount: availableTickets.length,
         newMatchedTicketCount: firstRun ? 0 : newTickets.length,
         priorityNewMatchedTicketCount: firstRun ? 0 : priorityTickets.length
       }
@@ -572,10 +686,10 @@ async function main() {
 
     console.log(`Checked ${event.name}.`);
     console.log(`Page ticket types: ${event.tickets.length}`);
-    console.log(`Active non-charity athlete tickets: ${activeTickets.length}`);
+    console.log(`Available non-charity athlete tickets: ${availableTickets.length}`);
 
-    if (activeTickets.length > 0) {
-      for (const ticket of activeTickets) {
+    if (availableTickets.length > 0) {
+      for (const ticket of availableTickets) {
         console.log(`- ${formatTicket(ticket)}`);
       }
     }
@@ -585,8 +699,12 @@ async function main() {
       continue;
     }
 
+    if (detectorChanged) {
+      console.log("Availability detector changed; current buyable tickets are being treated as new.");
+    }
+
     if (newTickets.length === 0) {
-      console.log("No new active athlete tickets for this event since the last run.");
+      console.log("No new available athlete tickets for this event since the last run.");
       continue;
     }
 
@@ -598,7 +716,7 @@ async function main() {
       priorityTickets
     });
 
-    console.log("New active athlete tickets detected:");
+    console.log("New available athlete tickets detected:");
     for (const ticket of newTickets) {
       const priority = priorityTickets.some((priorityTicket) => priorityTicket.id === ticket.id)
         ? " PRIORITY"

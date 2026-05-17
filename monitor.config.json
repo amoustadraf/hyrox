@@ -24,7 +24,7 @@
     }
   ],
   "monitoring": {
-    "mode": "structured_page_json",
+    "mode": "checkout_page_availability_json",
     "userAgent": "Mozilla/5.0 hyrox-ticket-monitor/1.0",
     "timeoutSeconds": 30,
     "retryAttempts": 3,
@@ -41,7 +41,7 @@
     "competitionMetaField": "meta.is_competition",
     "competitionMetaValue": "TRUE",
     "availableWhen": {
-      "field": "active",
+      "field": "buyable",
       "equals": true
     },
     "ignoreNamesContaining": [
