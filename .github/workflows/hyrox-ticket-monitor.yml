@@ -2,6 +2,9 @@ name: HYROX Ticket Monitor
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
   schedule:
     # GitHub schedules use UTC. These approximate 7:17 AM-11:17 PM Toronto
     # during daylight time, which covers the October 2026 event window.
@@ -38,7 +41,15 @@ jobs:
           restore-keys: |
             hyrox-ticket-state-
 
+      - name: Send Discord smoke test
+        if: github.event_name == 'push' && contains(github.event.head_commit.message, '[discord-test]')
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DISCORD_ENABLED: ${{ secrets.DISCORD_WEBHOOK_URL != '' }}
+        run: npm run notify-test
+
       - name: Run monitor
+        if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[discord-test]')
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           DISCORD_ENABLED: ${{ secrets.DISCORD_WEBHOOK_URL != '' }}

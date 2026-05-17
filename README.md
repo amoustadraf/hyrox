@@ -48,3 +48,5 @@ To use Discord in GitHub Actions:
 3. Add a repository secret named `DISCORD_WEBHOOK_URL`.
 
 After the first run writes its baseline, later runs send Discord only when a new active non-charity athlete ticket appears. Open Men is marked as priority.
+
+Pushes to `main` also run the workflow as a sanity check. If a commit message contains `[discord-test]`, the workflow sends a Discord smoke-test message instead of checking tickets.
