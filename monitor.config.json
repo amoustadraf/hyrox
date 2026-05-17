@@ -1,0 +1,78 @@
+{
+  "event": {
+    "name": "GoodLife HYROX Toronto | Season 26/27",
+    "officialEventPageUrl": "https://hyrox.com/event/goodlife-hyrox-toronto-26-27/",
+    "ticketPageUrl": "https://ca.hyrox.com/event/hyrox-toronto-season-26-27-3bsreb",
+    "eventDates": {
+      "start": "2026-10-01",
+      "end": "2026-10-04",
+      "timezone": "America/Toronto"
+    }
+  },
+  "monitoring": {
+    "mode": "structured_page_json",
+    "userAgent": "Mozilla/5.0 hyrox-ticket-monitor/1.0",
+    "timeoutSeconds": 30,
+    "minimumMinutesBetweenChecks": 45,
+    "alertOnlyOnChanges": true,
+    "stateFile": "monitor.state.json"
+  },
+  "ticketFilter": {
+    "onlyAthleteTickets": true,
+    "alertOnAnyCompetitionClass": true,
+    "excludedCompetitionClasses": [],
+    "competitionMetaField": "meta.is_competition",
+    "competitionMetaValue": "TRUE",
+    "availableWhen": {
+      "field": "active",
+      "equals": true
+    },
+    "ignoreNamesContaining": [
+      "CHARITY",
+      "SPECTATOR",
+      "PHOTO PACKAGE",
+      "FREE U12"
+    ],
+    "prioritySignals": [
+      {
+        "label": "Open Men",
+        "competitionClass": "SOLO_OPEN_M",
+        "nameMustNotContain": [
+          "CHARITY"
+        ],
+        "discordMessagePrefix": "PRIORITY: Open Men ticket available"
+      }
+    ]
+  },
+  "scheduleRecommendation": {
+    "normal": {
+      "description": "Low-noise baseline checks.",
+      "timesLocal": [
+        "08:00",
+        "20:00"
+      ]
+    },
+    "highInterest": {
+      "description": "Use this when you are actively trying to catch returned tickets.",
+      "intervalMinutes": 45,
+      "activeHoursLocal": {
+        "start": "07:00",
+        "end": "23:00"
+      }
+    }
+  },
+  "notifications": {
+    "discord": {
+      "enabled": false,
+      "webhookUrlEnvVar": "DISCORD_WEBHOOK_URL",
+      "mention": "",
+      "priorityMention": "",
+      "notifyOn": [
+        "new_active_athlete_ticket",
+        "ticket_became_active",
+        "priority_ticket_became_active",
+        "monitor_error_after_retries"
+      ]
+    }
+  }
+}

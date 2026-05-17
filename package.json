@@ -1,0 +1,15 @@
+{
+  "name": "hyrox-tickets",
+  "version": "1.0.0",
+  "private": true,
+  "description": "HYROX Toronto ticket availability monitor",
+  "scripts": {
+    "check": "node monitor.js",
+    "check:now": "node monitor.js --force",
+    "dry-run": "node monitor.js --dry-run",
+    "notify-test": "node monitor.js --notify-test"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
