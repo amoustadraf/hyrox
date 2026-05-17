@@ -8,6 +8,7 @@ const args = new Set(process.argv.slice(2));
 const dryRun = args.has("--dry-run");
 const force = args.has("--force") || dryRun;
 const notifyTest = args.has("--notify-test");
+const workflowFailureNotify = args.has("--workflow-failure-notify");
 const defaultState = {
   lastCheckedAt: null,
   activeAthleteTicketIds: [],
@@ -21,6 +22,8 @@ Usage:
   node monitor.js --force          Check now, ignoring the minimum interval
   node monitor.js --dry-run        Check now without writing state or sending Discord
   node monitor.js --notify-test    Send a test Discord notification
+  node monitor.js --workflow-failure-notify
+                                  Send a GitHub workflow failure notification
 `);
   process.exit(0);
 }
@@ -364,6 +367,21 @@ function buildMonitorErrorMessage(config, error, context = {}) {
   return lines.filter(Boolean).join("\n").slice(0, 1900);
 }
 
+function buildWorkflowFailureMessage(config) {
+  const runUrl = getGitHubRunUrl();
+  const lines = [
+    "HYROX ticket monitor workflow failed outside the monitor script.",
+    config.event?.ticketPageUrl || ""
+  ];
+
+  if (runUrl) {
+    lines.push("");
+    lines.push(`GitHub run: ${runUrl}`);
+  }
+
+  return lines.filter(Boolean).join("\n").slice(0, 1900);
+}
+
 async function notifyMonitorError(config, error, context = {}) {
   const message = buildMonitorErrorMessage(config, error, context);
 
@@ -423,6 +441,12 @@ async function main() {
       `HYROX ticket monitor test notification\n${config.event.ticketPageUrl}`
     );
     console.log(sent ? "Sent Discord test notification." : "Discord notification disabled.");
+    return;
+  }
+
+  if (workflowFailureNotify) {
+    const sent = await sendDiscordMessage(config, buildWorkflowFailureMessage(config));
+    console.log(sent ? "Sent Discord workflow failure notification." : "Discord notification disabled.");
     return;
   }
 

@@ -60,27 +60,39 @@ jobs:
 
       - name: Notify workflow failure
         if: failure()
+        uses: actions/github-script@v7
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-        run: |
-          if [ -f .monitor-cache/error-notified ]; then
-            echo "Monitor script already sent a Discord error notification."
-            exit 0
-          fi
+        with:
+          script: |
+            const fs = require("fs");
 
-          if [ -z "$DISCORD_WEBHOOK_URL" ]; then
-            echo "No Discord webhook secret configured; skipping failure notification."
-            exit 0
-          fi
+            if (fs.existsSync(".monitor-cache/error-notified")) {
+              core.info("Monitor script already sent a Discord error notification.");
+              return;
+            }
 
-          MESSAGE="HYROX ticket monitor workflow failed outside the monitor script.
-GitHub run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
-          export MESSAGE
+            const webhookUrl = process.env.DISCORD_WEBHOOK_URL;
+            if (!webhookUrl) {
+              core.info("No Discord webhook secret configured; skipping failure notification.");
+              return;
+            }
 
-          curl --fail-with-body \
-            -H "Content-Type: application/json" \
-            -d "$(node -e 'process.stdout.write(JSON.stringify({ content: process.env.MESSAGE }))')" \
-            "$DISCORD_WEBHOOK_URL"
+            const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
+            const response = await fetch(webhookUrl, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                content: [
+                  "HYROX ticket monitor workflow failed outside the monitor script.",
+                  `GitHub run: ${runUrl}`
+                ].join("\n")
+              })
+            });
+
+            if (!response.ok) {
+              throw new Error(`Discord webhook failed: HTTP ${response.status} ${await response.text()}`);
+            }
 
       - name: Upload monitor diagnostics
         if: failure()

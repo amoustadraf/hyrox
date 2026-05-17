@@ -7,7 +7,8 @@
     "check": "node monitor.js",
     "check:now": "node monitor.js --force",
     "dry-run": "node monitor.js --dry-run",
-    "notify-test": "node monitor.js --notify-test"
+    "notify-test": "node monitor.js --notify-test",
+    "notify-workflow-failure": "node monitor.js --workflow-failure-notify"
   },
   "engines": {
     "node": ">=18"
