@@ -371,9 +371,34 @@ function isPriorityTicket(ticket, prioritySignals) {
   });
 }
 
-function filterInterestingTickets(rawTickets, config, event) {
-  const filter = config.ticketFilter;
+function mergeTicketFilter(config, eventConfig) {
+  const globalFilter = config.ticketFilter || {};
+  const eventFilter = eventConfig.ticketFilter || {};
+
+  return {
+    ...globalFilter,
+    ...eventFilter,
+    availableWhen: {
+      ...(globalFilter.availableWhen || {}),
+      ...(eventFilter.availableWhen || {})
+    },
+    ignoreNamesContaining:
+      eventFilter.ignoreNamesContaining || globalFilter.ignoreNamesContaining || [],
+    includedCompetitionClasses:
+      eventFilter.includedCompetitionClasses || globalFilter.includedCompetitionClasses || [],
+    excludedCompetitionClasses:
+      eventFilter.excludedCompetitionClasses || globalFilter.excludedCompetitionClasses || [],
+    prioritySignals:
+      eventFilter.prioritySignals || globalFilter.prioritySignals || []
+  };
+}
+
+function filterInterestingTickets(rawTickets, filter, event) {
   const ignoredNames = filter.ignoreNamesContaining || [];
+  const includedClasses =
+    filter.includedCompetitionClasses?.length > 0
+      ? new Set(filter.includedCompetitionClasses)
+      : null;
   const excludedClasses = new Set(filter.excludedCompetitionClasses || []);
   const availableField = filter.availableWhen?.field || "buyable";
   const availableValue = filter.availableWhen?.equals ?? true;
@@ -387,6 +412,7 @@ function filterInterestingTickets(rawTickets, config, event) {
       if (!filter.onlyAthleteTickets) return true;
       return getNestedValue({ meta: { is_competition: ticket.isCompetition } }, filter.competitionMetaField) === filter.competitionMetaValue;
     })
+    .filter((ticket) => !includedClasses || includedClasses.has(ticket.competitionClass))
     .filter((ticket) => !excludedClasses.has(ticket.competitionClass))
     .filter((ticket) => ticket[availableField] === availableValue)
     .sort((a, b) => a.name.localeCompare(b.name));
@@ -401,14 +427,14 @@ function formatTicket(ticket) {
   return `${ticket.name} (${ticket.competitionClass || "unknown class"}, ${date}${available})`;
 }
 
-function buildDiscordMessage({ config, eventConfig, event, newTickets, priorityTickets }) {
+function buildDiscordMessage({ config, eventConfig, event, newTickets, priorityTickets, ticketFilter }) {
   const lines = [];
   const discord = config.notifications?.discord || {};
   const eventName = event?.name || eventConfig.name || "HYROX event";
 
   if (priorityTickets.length > 0) {
     const priorityPrefix =
-      config.ticketFilter.prioritySignals?.[0]?.discordMessagePrefix ||
+      ticketFilter.prioritySignals?.[0]?.discordMessagePrefix ||
       "PRIORITY ticket available";
     const mention = discord.priorityMention ? `${discord.priorityMention} ` : "";
     lines.push(`${mention}${priorityPrefix}: ${eventName}`);
@@ -654,7 +680,8 @@ async function main() {
       categories: checkoutEvent.categories || pageEvent.categories || []
     };
 
-    const availableTickets = filterInterestingTickets(event.tickets, config, event);
+    const ticketFilter = mergeTicketFilter(config, eventConfig);
+    const availableTickets = filterInterestingTickets(event.tickets, ticketFilter, event);
     const detectorChanged =
       !!eventState.lastCheckedAt &&
       eventState.availabilityDetectorVersion !== AVAILABILITY_DETECTOR_VERSION;
@@ -664,7 +691,7 @@ async function main() {
     const newTickets = availableTickets.filter((ticket) => !previousActiveIds.has(ticket.id));
     const firstRun = !eventState.lastCheckedAt;
     const priorityTickets = newTickets.filter((ticket) =>
-      isPriorityTicket(ticket, config.ticketFilter.prioritySignals || [])
+      isPriorityTicket(ticket, ticketFilter.prioritySignals || [])
     );
 
     nextState.events[eventConfig.key] = {
@@ -713,7 +740,8 @@ async function main() {
       eventConfig,
       event,
       newTickets,
-      priorityTickets
+      priorityTickets,
+      ticketFilter
     });
 
     console.log("New available athlete tickets detected:");

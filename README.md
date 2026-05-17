@@ -5,7 +5,7 @@ This checks the configured HYROX ticket pages, reads the checkout availability J
 Configured events:
 
 - GoodLife HYROX Toronto | Season 26/27
-- HYROX Chiba | Season 26/27
+- HYROX Chiba | Season 26/27, men divisions only
 
 The monitor retries transient failures, writes issue details to `monitor.log`, records the latest error in `monitor.state.json`, and sends Discord error notifications when Discord is configured.
 
