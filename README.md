@@ -29,7 +29,7 @@ Available tickets are not silently baselined if the cache is missing. When an al
 
 1. Copy `.env.example` to `.env`.
 2. Put your Discord webhook URL in `.env`.
-3. Set `notifications.discord.enabled` to `true` in `monitor.config.json`.
+3. Keep `DISCORD_ENABLED=true` in `.env`.
 4. Test it:
 
 ```powershell

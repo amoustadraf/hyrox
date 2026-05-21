@@ -59,6 +59,17 @@ function getConfiguredEvents(config) {
   }));
 }
 
+function validateConfig(config) {
+  const mode = config.monitoring?.mode || "checkout_page_availability_json";
+  if (mode !== "checkout_page_availability_json") {
+    throw new Error(`Unsupported monitoring.mode: ${mode}`);
+  }
+
+  if (getConfiguredEvents(config).length === 0) {
+    throw new Error("No HYROX events configured.");
+  }
+}
+
 function getEventState(state, eventConfig) {
   if (state.events?.[eventConfig.key]) {
     return state.events[eventConfig.key];
@@ -289,7 +300,7 @@ function volumeOrFallback(value, fallback) {
 function getTicketAvailability(ticket, event) {
   const category = getEventCategory(event, ticket);
   const ticketVolume = volumeOrFallback(ticket.v, 0);
-  const categoryVolume = category ? volumeOrFallback(category.v, 0) : 0;
+  const categoryVolume = category ? volumeOrFallback(category.v, Infinity) : Infinity;
   const eventVolume = volumeOrFallback(event.v, Infinity);
   const ticketOrderMax = volumeOrFallback(ticket.maxAmountPerOrder, Infinity);
   const categoryOrderMax = volumeOrFallback(category?.maxAmountPerOrder, Infinity);
@@ -357,6 +368,26 @@ function readBooleanEnv(name) {
   if (/^(1|true|yes|on)$/i.test(value)) return true;
   if (/^(0|false|no|off)$/i.test(value)) return false;
   return undefined;
+}
+
+function shouldNotify(config, type) {
+  const notifyOn = config.notifications?.discord?.notifyOn;
+  if (!Array.isArray(notifyOn)) return true;
+  return notifyOn.includes(type);
+}
+
+function shouldNotifyTicketAlert(config, priorityTickets) {
+  if (
+    priorityTickets.length > 0 &&
+    shouldNotify(config, "priority_ticket_became_active")
+  ) {
+    return true;
+  }
+
+  return (
+    shouldNotify(config, "new_active_athlete_ticket") ||
+    shouldNotify(config, "ticket_became_active")
+  );
 }
 
 function resolveStateFile(config) {
@@ -506,8 +537,33 @@ function filterInterestingTickets(rawTickets, filter, event) {
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
-function formatTicket(ticket) {
-  const date = ticket.date ? ticket.date.slice(0, 10) : "unknown date";
+function formatDateInTimeZone(value, timeZone) {
+  if (!value) return "unknown date";
+
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return String(value).slice(0, 10);
+  if (!timeZone) return date.toISOString().slice(0, 10);
+
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit"
+    }).formatToParts(date);
+    const get = (type) => parts.find((part) => part.type === type)?.value;
+    const year = get("year");
+    const month = get("month");
+    const day = get("day");
+    if (!year || !month || !day) return date.toISOString().slice(0, 10);
+    return `${year}-${month}-${day}`;
+  } catch {
+    return date.toISOString().slice(0, 10);
+  }
+}
+
+function formatTicket(ticket, eventConfig = {}) {
+  const date = formatDateInTimeZone(ticket.date, eventConfig.eventDates?.timezone);
   const available =
     typeof ticket.availableQuantity === "number"
       ? `, ${ticket.availableQuantity} available`
@@ -527,15 +583,15 @@ function buildDiscordMessage({ config, eventConfig, event, newTickets, priorityT
     const mention = discord.priorityMention ? `${discord.priorityMention} ` : "";
     lines.push(`${mention}${priorityPrefix}: ${eventName}`);
     for (const ticket of priorityTickets) {
-      lines.push(`- ${formatTicket(ticket)}`);
+      lines.push(`- ${formatTicket(ticket, eventConfig)}`);
     }
     lines.push("");
   }
 
   const mention = discord.mention && priorityTickets.length === 0 ? `${discord.mention} ` : "";
-  lines.push(`${mention}${eventName} available athlete ticket change detected.`);
+  lines.push(`${mention}${eventName} available monitored athlete ticket change detected.`);
   for (const ticket of newTickets) {
-    lines.push(`- ${formatTicket(ticket)}`);
+    lines.push(`- ${formatTicket(ticket, eventConfig)}`);
   }
   lines.push("");
   lines.push(eventConfig.ticketPageUrl);
@@ -650,6 +706,12 @@ function buildWorkflowFailureMessage(config) {
 }
 
 async function notifyMonitorError(config, error, context = {}) {
+  if (!shouldNotify(config, "monitor_error_after_retries")) {
+    console.log("Discord error notification type disabled.");
+    await markErrorNotified(config);
+    return;
+  }
+
   const message = buildMonitorErrorMessage(config, error, context);
 
   try {
@@ -699,6 +761,7 @@ async function main() {
   await loadDotEnv();
 
   const config = await loadJson(CONFIG_FILE);
+  validateConfig(config);
   const stateFile = resolveStateFile(config);
   const state = await loadJson(stateFile, defaultState);
 
@@ -733,13 +796,6 @@ async function main() {
     lastCheckedAt: checkedAt
   };
 
-  if (state.lastErrorAt) {
-    nextState.lastErrorAt = state.lastErrorAt;
-  }
-
-  if (state.lastError) {
-    nextState.lastError = state.lastError;
-  }
   const alertMessages = [];
 
   for (const eventConfig of configuredEvents) {
@@ -828,7 +884,10 @@ async function main() {
     );
     const firstRun = !eventState.lastCheckedAt;
     const alertOnFirstRun = config.monitoring.alertOnFirstRunAvailableTickets === true;
-    const stateNewTickets = availableTickets.filter((ticket) => !previousActiveIds.has(ticket.id));
+    const alertOnlyOnChanges = config.monitoring.alertOnlyOnChanges !== false;
+    const stateNewTickets = alertOnlyOnChanges
+      ? availableTickets.filter((ticket) => !previousActiveIds.has(ticket.id))
+      : availableTickets;
     const alertTickets = firstRun && alertOnFirstRun ? availableTickets : stateNewTickets;
     const priorityTickets = alertTickets.filter((ticket) =>
       isPriorityTicket(ticket, ticketFilter.prioritySignals || [])
@@ -858,7 +917,7 @@ async function main() {
 
     if (availableTickets.length > 0) {
       for (const ticket of availableTickets) {
-        console.log(`- ${formatTicket(ticket)}`);
+        console.log(`- ${formatTicket(ticket, resolvedEventConfig)}`);
       }
     }
 
@@ -868,7 +927,7 @@ async function main() {
     }
 
     if (firstRun) {
-      console.log("First run has available tickets; alerting because alertOnFirstRunAvailableTickets is enabled.");
+      console.log("First run has available monitored tickets; alerting because alertOnFirstRunAvailableTickets is enabled.");
     }
 
     if (detectorChanged && availableTickets.length > 0) {
@@ -876,7 +935,7 @@ async function main() {
     }
 
     if (alertTickets.length === 0) {
-      console.log("No new available athlete tickets for this event since the last run.");
+      console.log("No new available monitored athlete tickets for this event since the last run.");
       continue;
     }
 
@@ -889,15 +948,19 @@ async function main() {
       ticketFilter
     });
 
-    console.log("New available athlete tickets detected:");
+    console.log("New available monitored athlete tickets detected:");
     for (const ticket of alertTickets) {
       const priority = priorityTickets.some((priorityTicket) => priorityTicket.id === ticket.id)
         ? " PRIORITY"
         : "";
-      console.log(`- ${formatTicket(ticket)}${priority}`);
+      console.log(`- ${formatTicket(ticket, resolvedEventConfig)}${priority}`);
     }
 
-    alertMessages.push(message);
+    if (shouldNotifyTicketAlert(config, priorityTickets)) {
+      alertMessages.push(message);
+    } else {
+      console.log("Discord ticket notification type disabled; state will still be updated.");
+    }
   }
 
   if (alertMessages.length === 0) {
