@@ -27,8 +27,7 @@
           "SOLO_PRO_M",
           "DOUBLES_OPEN_M",
           "DOUBLES_PRO_M",
-          "RELAY_M",
-          "ADAPTIVE_M"
+          "RELAY_M"
         ]
       }
     },
@@ -67,6 +66,7 @@
     },
     "ignoreNamesContaining": [
       "CHARITY",
+      "ADAPTIVE",
       "SPECTATOR",
       "PHOTO PACKAGE",
       "FREE U12"
