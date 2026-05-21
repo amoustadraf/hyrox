@@ -871,7 +871,7 @@ async function main() {
       console.log("First run has available tickets; alerting because alertOnFirstRunAvailableTickets is enabled.");
     }
 
-    if (detectorChanged) {
+    if (detectorChanged && availableTickets.length > 0) {
       console.log("Availability detector changed; current buyable tickets are being treated as new.");
     }
 
@@ -913,12 +913,11 @@ async function main() {
     return;
   }
 
-  const requireDiscordForAlerts = readBooleanEnv("HYROX_REQUIRE_DISCORD_FOR_ALERTS") === true;
   for (const message of alertMessages) {
     const sent = await withRetries(config, "Send Discord ticket notification", () =>
       sendDiscordMessage(config, message)
     );
-    if (!sent && requireDiscordForAlerts) {
+    if (!sent) {
       throw new Error("Discord notification was required for ticket alerts, but Discord is disabled.");
     }
     console.log(sent ? "Discord notification sent." : "Discord notification disabled.");

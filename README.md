@@ -22,7 +22,7 @@ npm run check
 
 If the first real run for an event sees available tickets, it sends an alert. If no tickets are available, it writes a quiet baseline. Later runs alert only when a new available non-charity athlete ticket appears. Open Men (`SOLO_OPEN_M`) is marked as priority.
 
-In GitHub Actions, available tickets are not silently baselined if the cache is missing. The workflow requires Discord when an alert is generated, and the monitor saves the new state only after alert delivery is attempted successfully.
+Available tickets are not silently baselined if the cache is missing. When an alert is generated, Discord delivery is required and the monitor saves the new state only after the alert is sent successfully.
 
 ## Discord
 
