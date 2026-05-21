@@ -6,6 +6,7 @@ Configured events:
 
 - GoodLife HYROX Toronto | Season 26/27
 - HYROX Chiba | Season 26/27, men divisions only
+- AirAsia HYROX Seoul, waiting for the official page to expose a ticket page
 
 The monitor retries transient failures, writes issue details to `monitor.log`, records the latest error in `monitor.state.json`, and sends Discord error notifications when Discord is configured.
 
@@ -55,6 +56,8 @@ To use Discord in GitHub Actions:
 3. Add a repository secret named `DISCORD_WEBHOOK_URL`.
 
 After the first run for an event writes its baseline, later runs send Discord only when a new available non-charity athlete ticket appears. Open Men is marked as priority.
+
+If a configured event only has an official HYROX page and no ticket page yet, the monitor checks the official page for a ticket-page link and records a waiting state instead of failing. Once the ticket page appears, later runs use checkout availability JSON for normal ticket alerts.
 
 Pushes to `main` also run the workflow as a sanity check. If a commit message contains `[discord-test]`, the workflow sends a Discord smoke-test message instead of checking tickets.
 

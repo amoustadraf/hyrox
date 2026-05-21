@@ -84,9 +84,16 @@ function getEventState(state, eventConfig) {
 }
 
 function getEventUrls(config) {
-  return getConfiguredEvents(config)
-    .map((eventConfig) => eventConfig.ticketPageUrl)
-    .filter(Boolean);
+  return [
+    ...new Set(
+      getConfiguredEvents(config)
+        .flatMap((eventConfig) => [
+          eventConfig.ticketPageUrl,
+          eventConfig.officialEventPageUrl
+        ])
+        .filter(Boolean)
+    )
+  ];
 }
 
 async function exists(filePath) {
@@ -183,6 +190,87 @@ function extractNextData(html) {
   }
 
   return JSON.parse(match[1]);
+}
+
+function decodeHtmlEntities(value) {
+  return String(value || "")
+    .replace(/&amp;/g, "&")
+    .replace(/&#038;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#039;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">");
+}
+
+function stripHtml(html) {
+  return String(html || "")
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function extractUrlsFromHtml(html, baseUrl) {
+  const rawUrls = new Set();
+  const attributePattern = /\b(?:href|src|data-[a-z0-9_-]+)=["']([^"']+)["']/gi;
+  const absoluteUrlPattern = /https?:\/\/[^\s"'<>\\]+/gi;
+  let match;
+
+  while ((match = attributePattern.exec(html)) !== null) {
+    rawUrls.add(match[1]);
+  }
+
+  while ((match = absoluteUrlPattern.exec(html)) !== null) {
+    rawUrls.add(match[0]);
+  }
+
+  return [...rawUrls]
+    .map((url) => decodeHtmlEntities(url))
+    .map((url) => {
+      try {
+        return new URL(url, baseUrl).href;
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean);
+}
+
+function isLikelyTicketPageUrl(candidateUrl, officialEventPageUrl) {
+  try {
+    const candidate = new URL(candidateUrl);
+    const official = new URL(officialEventPageUrl);
+
+    if (candidate.href === official.href) return false;
+    if (candidate.hostname === official.hostname) return false;
+    if (!/hyrox|vivenu/i.test(candidate.hostname)) return false;
+    if (!/^\/event\/[^/]+\/?$/i.test(candidate.pathname)) return false;
+
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function discoverTicketPageUrl(officialPageHtml, eventConfig) {
+  if (!eventConfig.officialEventPageUrl) return null;
+
+  const urls = extractUrlsFromHtml(officialPageHtml, eventConfig.officialEventPageUrl);
+  return urls.find((url) => isLikelyTicketPageUrl(url, eventConfig.officialEventPageUrl)) || null;
+}
+
+function summarizeOfficialPage(officialPageHtml, eventConfig) {
+  const text = stripHtml(officialPageHtml);
+  const candidateTicketPageUrls = eventConfig.officialEventPageUrl
+    ? extractUrlsFromHtml(officialPageHtml, eventConfig.officialEventPageUrl)
+        .filter((url) => isLikelyTicketPageUrl(url, eventConfig.officialEventPageUrl))
+    : [];
+
+  return {
+    ticketSalesStartSoon: /ticket sales start soon/i.test(text),
+    candidateTicketPageUrls
+  };
 }
 
 function getTicketId(ticket) {
@@ -656,20 +744,70 @@ async function main() {
 
   for (const eventConfig of configuredEvents) {
     const eventState = getEventState(state, eventConfig);
+    let ticketPageUrl = eventConfig.ticketPageUrl;
+
+    if (!ticketPageUrl) {
+      if (!eventConfig.officialEventPageUrl) {
+        throw new Error(`No ticketPageUrl or officialEventPageUrl configured for ${eventConfig.name}.`);
+      }
+
+      const officialPageHtml = await withRetries(
+        config,
+        `Fetch official event page for ${eventConfig.name}`,
+        () => fetchText(eventConfig.officialEventPageUrl, config)
+      );
+      const officialPageSummary = summarizeOfficialPage(officialPageHtml, eventConfig);
+      ticketPageUrl = discoverTicketPageUrl(officialPageHtml, eventConfig);
+
+      if (!ticketPageUrl) {
+        nextState.events[eventConfig.key] = {
+          lastCheckedAt: checkedAt,
+          eventName: eventConfig.name,
+          officialEventPageUrl: eventConfig.officialEventPageUrl,
+          ticketPageUrl: null,
+          checkoutPageUrl: null,
+          availabilityDetectorVersion: AVAILABILITY_DETECTOR_VERSION,
+          activeAthleteTicketIds: [],
+          activeAthleteTickets: [],
+          lastResult: {
+            status: "waiting_for_ticket_page",
+            officialPageTicketSalesStartSoon: officialPageSummary.ticketSalesStartSoon,
+            candidateTicketPageUrlCount: officialPageSummary.candidateTicketPageUrls.length,
+            availableMatchedTicketCount: 0,
+            newMatchedTicketCount: 0,
+            priorityNewMatchedTicketCount: 0
+          }
+        };
+
+        console.log(`Checked ${eventConfig.name}.`);
+        console.log("No ticket page found yet on the official event page.");
+        if (officialPageSummary.ticketSalesStartSoon) {
+          console.log("Official page currently says: Ticket sales start soon.");
+        }
+        continue;
+      }
+
+      console.log(`Discovered ticket page for ${eventConfig.name}: ${ticketPageUrl}`);
+    }
+
+    const resolvedEventConfig = {
+      ...eventConfig,
+      ticketPageUrl
+    };
     const pageEvent = await withRetries(config, `Fetch event page for ${eventConfig.name}`, async () => {
-      const nextData = extractNextData(await fetchText(eventConfig.ticketPageUrl, config));
+      const nextData = extractNextData(await fetchText(ticketPageUrl, config));
       const pageEvent = nextData.props?.pageProps?.event;
 
-      validateEventTickets(pageEvent, eventConfig, "event page");
+      validateEventTickets(pageEvent, resolvedEventConfig, "event page");
 
       return pageEvent;
     });
-    const checkoutPageUrl = deriveCheckoutPageUrl(eventConfig, pageEvent);
+    const checkoutPageUrl = deriveCheckoutPageUrl(resolvedEventConfig, pageEvent);
     const checkoutEvent = await withRetries(config, `Fetch checkout availability for ${eventConfig.name}`, async () => {
       const nextData = extractNextData(await fetchText(checkoutPageUrl, config));
       const pageEvent = nextData.props?.pageProps?.event;
 
-      validateCheckoutAvailability(pageEvent, eventConfig);
+      validateCheckoutAvailability(pageEvent, resolvedEventConfig);
 
       return pageEvent;
     });
@@ -680,7 +818,7 @@ async function main() {
       categories: checkoutEvent.categories || pageEvent.categories || []
     };
 
-    const ticketFilter = mergeTicketFilter(config, eventConfig);
+    const ticketFilter = mergeTicketFilter(config, resolvedEventConfig);
     const availableTickets = filterInterestingTickets(event.tickets, ticketFilter, event);
     const detectorChanged =
       !!eventState.lastCheckedAt &&
@@ -698,7 +836,8 @@ async function main() {
       lastCheckedAt: checkedAt,
       eventName: event.name,
       eventId: event._id,
-      ticketPageUrl: eventConfig.ticketPageUrl,
+      officialEventPageUrl: eventConfig.officialEventPageUrl,
+      ticketPageUrl,
       checkoutPageUrl,
       availabilityDetectorVersion: AVAILABILITY_DETECTOR_VERSION,
       activeAthleteTicketIds: availableTickets.map((ticket) => ticket.id),
@@ -737,7 +876,7 @@ async function main() {
 
     const message = buildDiscordMessage({
       config,
-      eventConfig,
+      eventConfig: resolvedEventConfig,
       event,
       newTickets,
       priorityTickets,

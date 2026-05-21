@@ -31,6 +31,16 @@
           "ADAPTIVE_M"
         ]
       }
+    },
+    {
+      "key": "seoul",
+      "name": "AirAsia HYROX Seoul",
+      "officialEventPageUrl": "https://hyrox.com/event/hyrox-seoul/",
+      "eventDates": {
+        "start": "2026-11-14",
+        "end": "2026-11-15",
+        "timezone": "Asia/Seoul"
+      }
     }
   ],
   "monitoring": {
