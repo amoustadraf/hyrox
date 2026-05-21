@@ -40,6 +40,16 @@
         "end": "2026-11-15",
         "timezone": "Asia/Seoul"
       }
+    },
+    {
+      "key": "vancouver",
+      "name": "HYROX Vancouver",
+      "officialEventPageUrl": "https://hyrox.com/event/hyrox-vancouver/",
+      "eventDates": {
+        "start": "2026-12-18",
+        "end": "2026-12-20",
+        "timezone": "America/Vancouver"
+      }
     }
   ],
   "monitoring": {

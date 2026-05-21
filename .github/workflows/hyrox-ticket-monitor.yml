@@ -6,8 +6,8 @@ on:
     branches:
       - main
   schedule:
-    # GitHub schedules use UTC. One hourly check keeps Toronto, Chiba, and Seoul
-    # covered without trying to map separate event time zones.
+    # GitHub schedules use UTC. One hourly check keeps Toronto, Chiba, Seoul,
+    # and Vancouver covered without trying to map separate event time zones.
     - cron: "17 * * * *"
 
 concurrency:

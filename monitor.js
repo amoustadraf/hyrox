@@ -854,7 +854,7 @@ async function main() {
 
     console.log(`Checked ${event.name}.`);
     console.log(`Page ticket types: ${event.tickets.length}`);
-    console.log(`Available non-charity athlete tickets: ${availableTickets.length}`);
+    console.log(`Available monitored athlete tickets: ${availableTickets.length}`);
 
     if (availableTickets.length > 0) {
       for (const ticket of availableTickets) {
