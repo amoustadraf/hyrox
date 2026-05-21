@@ -9,7 +9,7 @@ const dryRun = args.has("--dry-run");
 const force = args.has("--force") || dryRun;
 const notifyTest = args.has("--notify-test");
 const workflowFailureNotify = args.has("--workflow-failure-notify");
-const AVAILABILITY_DETECTOR_VERSION = 2;
+const AVAILABILITY_DETECTOR_VERSION = 3;
 const defaultEventState = {
   lastCheckedAt: null,
   activeAthleteTicketIds: [],
@@ -826,9 +826,11 @@ async function main() {
     const previousActiveIds = new Set(
       detectorChanged ? [] : eventState.activeAthleteTicketIds || []
     );
-    const newTickets = availableTickets.filter((ticket) => !previousActiveIds.has(ticket.id));
     const firstRun = !eventState.lastCheckedAt;
-    const priorityTickets = newTickets.filter((ticket) =>
+    const alertOnFirstRun = config.monitoring.alertOnFirstRunAvailableTickets === true;
+    const stateNewTickets = availableTickets.filter((ticket) => !previousActiveIds.has(ticket.id));
+    const alertTickets = firstRun && alertOnFirstRun ? availableTickets : stateNewTickets;
+    const priorityTickets = alertTickets.filter((ticket) =>
       isPriorityTicket(ticket, ticketFilter.prioritySignals || [])
     );
 
@@ -845,8 +847,8 @@ async function main() {
       lastResult: {
         pageTicketCount: event.tickets.length,
         availableMatchedTicketCount: availableTickets.length,
-        newMatchedTicketCount: firstRun ? 0 : newTickets.length,
-        priorityNewMatchedTicketCount: firstRun ? 0 : priorityTickets.length
+        newMatchedTicketCount: alertTickets.length,
+        priorityNewMatchedTicketCount: priorityTickets.length
       }
     };
 
@@ -860,16 +862,20 @@ async function main() {
       }
     }
 
-    if (firstRun) {
+    if (firstRun && alertTickets.length === 0) {
       console.log(dryRun ? "Dry run only; no baseline state written for this event." : "Baseline saved for this event; no alert sent on first run.");
       continue;
+    }
+
+    if (firstRun) {
+      console.log("First run has available tickets; alerting because alertOnFirstRunAvailableTickets is enabled.");
     }
 
     if (detectorChanged) {
       console.log("Availability detector changed; current buyable tickets are being treated as new.");
     }
 
-    if (newTickets.length === 0) {
+    if (alertTickets.length === 0) {
       console.log("No new available athlete tickets for this event since the last run.");
       continue;
     }
@@ -878,13 +884,13 @@ async function main() {
       config,
       eventConfig: resolvedEventConfig,
       event,
-      newTickets,
+      newTickets: alertTickets,
       priorityTickets,
       ticketFilter
     });
 
     console.log("New available athlete tickets detected:");
-    for (const ticket of newTickets) {
+    for (const ticket of alertTickets) {
       const priority = priorityTickets.some((priorityTicket) => priorityTicket.id === ticket.id)
         ? " PRIORITY"
         : "";
@@ -894,11 +900,10 @@ async function main() {
     alertMessages.push(message);
   }
 
-  if (!dryRun) {
-    await writeJson(stateFile, nextState);
-  }
-
   if (alertMessages.length === 0) {
+    if (!dryRun) {
+      await writeJson(stateFile, nextState);
+    }
     return;
   }
 
@@ -908,11 +913,19 @@ async function main() {
     return;
   }
 
+  const requireDiscordForAlerts = readBooleanEnv("HYROX_REQUIRE_DISCORD_FOR_ALERTS") === true;
   for (const message of alertMessages) {
     const sent = await withRetries(config, "Send Discord ticket notification", () =>
       sendDiscordMessage(config, message)
     );
+    if (!sent && requireDiscordForAlerts) {
+      throw new Error("Discord notification was required for ticket alerts, but Discord is disabled.");
+    }
     console.log(sent ? "Discord notification sent." : "Discord notification disabled.");
+  }
+
+  if (!dryRun) {
+    await writeJson(stateFile, nextState);
   }
 }
 

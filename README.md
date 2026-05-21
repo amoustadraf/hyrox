@@ -20,7 +20,9 @@ npm run check
 
 `check:now` always checks. `check` respects `minimumMinutesBetweenChecks` from `monitor.config.json`.
 
-The first real run for each event writes a baseline and does not send an alert. Later runs alert only when a new available non-charity athlete ticket appears. Open Men (`SOLO_OPEN_M`) is marked as priority.
+If the first real run for an event sees available tickets, it sends an alert. If no tickets are available, it writes a quiet baseline. Later runs alert only when a new available non-charity athlete ticket appears. Open Men (`SOLO_OPEN_M`) is marked as priority.
+
+In GitHub Actions, available tickets are not silently baselined if the cache is missing. The workflow requires Discord when an alert is generated, and the monitor saves the new state only after alert delivery is attempted successfully.
 
 ## Discord
 
@@ -47,7 +49,7 @@ Use every 45-60 minutes when actively watching for returned tickets. Twice daily
 
 The repository includes `.github/workflows/hyrox-ticket-monitor.yml`.
 
-That workflow runs hourly. GitHub cron schedules are UTC, and a simple hourly schedule keeps both Toronto and Chiba covered without mapping separate event time zones. It keeps `monitor.state.json` in the GitHub Actions cache so the workflow can compare each current page against the previous run without committing state files to the repo.
+That workflow runs hourly. GitHub cron schedules are UTC, and a simple hourly schedule keeps Toronto, Chiba, and Seoul covered without mapping separate event time zones. It keeps `monitor.state.json` in the GitHub Actions cache so the workflow can compare each current page against the previous run without committing state files to the repo.
 
 To use Discord in GitHub Actions:
 
@@ -55,7 +57,7 @@ To use Discord in GitHub Actions:
 2. Go to Settings -> Secrets and variables -> Actions.
 3. Add a repository secret named `DISCORD_WEBHOOK_URL`.
 
-After the first run for an event writes its baseline, later runs send Discord only when a new available non-charity athlete ticket appears. Open Men is marked as priority.
+After a baseline exists for an event, later runs send Discord only when a new available non-charity athlete ticket appears. Open Men is marked as priority.
 
 If a configured event only has an official HYROX page and no ticket page yet, the monitor checks the official page for a ticket-page link and records a waiting state instead of failing. Once the ticket page appears, later runs use checkout availability JSON for normal ticket alerts.
 

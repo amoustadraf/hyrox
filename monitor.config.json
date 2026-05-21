@@ -51,6 +51,7 @@
     "retryDelaySeconds": 10,
     "minimumMinutesBetweenChecks": 45,
     "alertOnlyOnChanges": true,
+    "alertOnFirstRunAvailableTickets": true,
     "stateFile": "monitor.state.json",
     "logFile": "monitor.log"
   },

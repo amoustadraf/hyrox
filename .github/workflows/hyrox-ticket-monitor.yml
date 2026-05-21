@@ -55,6 +55,7 @@ jobs:
           HYROX_STATE_FILE: .monitor-cache/monitor.state.json
           HYROX_LOG_FILE: .monitor-cache/monitor.log
           HYROX_ERROR_NOTIFIED_FILE: .monitor-cache/error-notified
+          HYROX_REQUIRE_DISCORD_FOR_ALERTS: true
         run: npm run check:now
 
       - name: Notify workflow failure
