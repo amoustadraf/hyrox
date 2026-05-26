@@ -313,7 +313,7 @@ The workflow:
 4. Restores `.monitor-cache` from GitHub Actions cache.
 5. Deletes stale `.monitor-cache/error-notified`.
 6. Runs either a Discord smoke test or the monitor.
-7. Sends a generic Discord failure message if the workflow fails before the monitor can send its own error.
+7. Sends a generic Discord failure message with `npm run notify-workflow-failure` if the workflow fails after the repository has been checked out.
 8. Uploads `.monitor-cache` as a diagnostic artifact on failure.
 
 The monitor uses these GitHub-specific environment variables:
