@@ -387,6 +387,7 @@ function getChangedTickets(availableTickets, eventState, detectorChanged, alertO
   if (!alertOnlyOnChanges) {
     return {
       alertTickets: availableTickets,
+      newTickets: availableTickets,
       quantityIncreaseTickets: []
     };
   }
@@ -397,17 +398,16 @@ function getChangedTickets(availableTickets, eventState, detectorChanged, alertO
   const previousActiveIds = new Set(
     detectorChanged ? [] : eventState.activeAthleteTicketIds || []
   );
+  const newTickets = availableTickets.filter((ticket) => !previousActiveIds.has(ticket.id));
   const quantityIncreaseTickets = availableTickets.filter((ticket) =>
     isQuantityIncrease(ticket, previousTicketsById.get(ticket.id))
   );
+  const changedTicketIds = new Set([
+    ...newTickets.map((ticket) => ticket.id),
+    ...quantityIncreaseTickets.map((ticket) => ticket.id)
+  ]);
   const alertTickets = availableTickets
-    .filter((ticket) => {
-      const previousTicket = previousTicketsById.get(ticket.id);
-      return (
-        !previousActiveIds.has(ticket.id) ||
-        isQuantityIncrease(ticket, previousTicket)
-      );
-    })
+    .filter((ticket) => changedTicketIds.has(ticket.id))
     .map((ticket) => {
       const previousTicket = previousTicketsById.get(ticket.id);
       if (!isQuantityIncrease(ticket, previousTicket)) {
@@ -422,6 +422,7 @@ function getChangedTickets(availableTickets, eventState, detectorChanged, alertO
 
   return {
     alertTickets,
+    newTickets,
     quantityIncreaseTickets
   };
 }
@@ -639,7 +640,7 @@ function formatTicket(ticket, eventConfig = {}) {
   return `${ticket.name} (${ticket.competitionClass || "unknown class"}, ${date}${available}${previousAvailable})`;
 }
 
-function buildDiscordMessage({ config, eventConfig, event, newTickets, priorityTickets, ticketFilter }) {
+function buildDiscordMessage({ config, eventConfig, event, changedTickets, priorityTickets, ticketFilter }) {
   const lines = [];
   const discord = config.notifications?.discord || {};
   const eventName = event?.name || eventConfig.name || "HYROX event";
@@ -658,7 +659,7 @@ function buildDiscordMessage({ config, eventConfig, event, newTickets, priorityT
 
   const mention = discord.mention && priorityTickets.length === 0 ? `${discord.mention} ` : "";
   lines.push(`${mention}${eventName} new or increased monitored athlete ticket availability detected.`);
-  for (const ticket of newTickets) {
+  for (const ticket of changedTickets) {
     lines.push(`- ${formatTicket(ticket, eventConfig)}`);
   }
   lines.push("");
@@ -898,8 +899,12 @@ async function main() {
             officialPageTicketSalesStartSoon: officialPageSummary.ticketSalesStartSoon,
             candidateTicketPageUrlCount: officialPageSummary.candidateTicketPageUrls.length,
             availableMatchedTicketCount: 0,
+            changedMatchedTicketCount: 0,
             newMatchedTicketCount: 0,
-            priorityNewMatchedTicketCount: 0
+            quantityIncreaseMatchedTicketCount: 0,
+            priorityChangedMatchedTicketCount: 0,
+            priorityNewMatchedTicketCount: 0,
+            priorityQuantityIncreaseMatchedTicketCount: 0
           }
         };
 
@@ -959,8 +964,15 @@ async function main() {
     const alertTickets = firstRun
       ? (alertOnFirstRun ? availableTickets : [])
       : changedTickets.alertTickets;
+    const newTickets = firstRun ? alertTickets : changedTickets.newTickets;
     const quantityIncreaseTickets = firstRun ? [] : changedTickets.quantityIncreaseTickets;
     const priorityTickets = alertTickets.filter((ticket) =>
+      isPriorityTicket(ticket, ticketFilter.prioritySignals || [])
+    );
+    const priorityNewTickets = newTickets.filter((ticket) =>
+      isPriorityTicket(ticket, ticketFilter.prioritySignals || [])
+    );
+    const priorityQuantityIncreaseTickets = quantityIncreaseTickets.filter((ticket) =>
       isPriorityTicket(ticket, ticketFilter.prioritySignals || [])
     );
 
@@ -977,9 +989,12 @@ async function main() {
       lastResult: {
         pageTicketCount: event.tickets.length,
         availableMatchedTicketCount: availableTickets.length,
-        newMatchedTicketCount: alertTickets.length,
+        changedMatchedTicketCount: alertTickets.length,
+        newMatchedTicketCount: newTickets.length,
         quantityIncreaseMatchedTicketCount: quantityIncreaseTickets.length,
-        priorityNewMatchedTicketCount: priorityTickets.length
+        priorityChangedMatchedTicketCount: priorityTickets.length,
+        priorityNewMatchedTicketCount: priorityNewTickets.length,
+        priorityQuantityIncreaseMatchedTicketCount: priorityQuantityIncreaseTickets.length
       }
     };
 
@@ -1015,7 +1030,7 @@ async function main() {
       config,
       eventConfig: resolvedEventConfig,
       event,
-      newTickets: alertTickets,
+      changedTickets: alertTickets,
       priorityTickets,
       ticketFilter
     });

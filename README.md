@@ -231,7 +231,7 @@ State stores:
 - availability detector version
 - currently active monitored ticket IDs
 - currently active monitored ticket summaries, including available quantities
-- last result counts, including quantity-increase counts
+- last result counts, including changed, new-ID, quantity-increase, and priority counts
 - latest error details, only when a run fails
 
 State is ignored by git. It is runtime data, not source code.
@@ -472,7 +472,7 @@ GitHub Actions should receive the webhook only through the repository secret nam
 
 ## Current Expected Dry Run Shape
 
-When no watched tickets are available, a healthy dry-run looks like:
+With the current live event pages, a healthy dry-run looks like:
 
 ```text
 Checked GoodLife HYROX Toronto | Season 26/27.
