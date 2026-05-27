@@ -1,12 +1,12 @@
 # HYROX Ticket Monitor
 
-This repository monitors configured HYROX event ticket pages and sends Discord alerts when new monitored athlete tickets become available.
+This repository monitors configured HYROX event ticket pages and sends Discord alerts when new monitored athlete tickets become available or when an already-seen monitored ticket gets more available quantity.
 
 The current setup watches:
 
 - GoodLife HYROX Toronto | Season 26/27
 - HYROX Chiba | Season 26/27, men divisions only
-- AirAsia HYROX Seoul, waiting for the official page to expose a ticket page
+- AirAsia HYROX Seoul | Season 26/27
 - HYROX Vancouver, waiting for the official page to expose a ticket page
 
 The monitor is intentionally conservative. It reads public HYROX/Vivenu page data, does not attempt checkout, does not bypass queues, does not solve captchas, and does not hammer the site.
@@ -81,8 +81,8 @@ At a high level, each run does this:
 7. Derives the checkout URL and reads checkout availability JSON.
 8. Normalizes tickets into a smaller internal shape.
 9. Filters out unwanted tickets.
-10. Compares available monitored ticket IDs against the previous state.
-11. Sends Discord alerts for new monitored availability.
+10. Compares available monitored ticket IDs and quantities against the previous state.
+11. Sends Discord alerts for new monitored availability or increased quantity.
 12. Writes the new state only after required Discord ticket alerts are delivered.
 
 This matters because a failed Discord send should not mark a ticket as already seen. If Discord fails for a ticket alert, the script fails and keeps the previous state so a later run can alert again.
@@ -197,7 +197,7 @@ The monitor can also use `notifications.discord.priorityMention` if a direct men
 
 ## Events With No Ticket Page Yet
 
-Seoul and Vancouver currently only have official HYROX event pages configured.
+Vancouver currently only has an official HYROX event page configured. Seoul now has a direct Korea HYROX ticket page configured.
 
 For events like this, the monitor:
 
@@ -230,8 +230,8 @@ State stores:
 - ticket page and checkout page URLs
 - availability detector version
 - currently active monitored ticket IDs
-- currently active monitored ticket summaries
-- last result counts
+- currently active monitored ticket summaries, including available quantities
+- last result counts, including quantity-increase counts
 - latest error details, only when a run fails
 
 State is ignored by git. It is runtime data, not source code.
@@ -249,7 +249,8 @@ With the current settings:
 
 - If an event has no previous baseline and monitored tickets are available, the monitor alerts.
 - If no monitored tickets are available, the monitor quietly writes a baseline.
-- After a baseline exists, the monitor only alerts when a new monitored ticket ID appears.
+- After a baseline exists, the monitor alerts when a new monitored ticket ID appears or an already-seen monitored ticket has a higher available quantity than the previous run.
+- Quantity-increase alerts include the current quantity and the previous quantity, for example `50 available, was 12`.
 - If the availability detector version changes, existing buyable tickets can be treated as new again.
 - Discord ticket alerts are required before state is saved.
 
@@ -480,11 +481,11 @@ Available monitored athlete tickets: 0
 Checked HYROX Chiba | Season 26/27.
 Available monitored athlete tickets: 0
 
-Checked AirAsia HYROX Seoul.
-No ticket page found yet on the official event page.
+Checked AirAsia | HYROX Seoul | Season 26/27.
+Available monitored athlete tickets: 15
 
 Checked HYROX Vancouver.
 No ticket page found yet on the official event page.
 ```
 
-Exact ticket counts and page text can change as HYROX updates the events.
+Exact ticket counts and page text can change as HYROX updates the events. For Seoul, current first-wave/general-sale behavior may show the same ticket IDs with a different available quantity; the monitor now alerts on those quantity increases.

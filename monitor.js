@@ -362,6 +362,70 @@ function ticketNameHasAny(ticket, fragments) {
   return fragments.some((fragment) => name.includes(String(fragment).toUpperCase()));
 }
 
+function getTicketsById(tickets = []) {
+  const ticketsById = new Map();
+
+  for (const ticket of tickets) {
+    if (ticket?.id) {
+      ticketsById.set(ticket.id, ticket);
+    }
+  }
+
+  return ticketsById;
+}
+
+function isQuantityIncrease(ticket, previousTicket) {
+  return (
+    previousTicket &&
+    typeof ticket.availableQuantity === "number" &&
+    typeof previousTicket.availableQuantity === "number" &&
+    ticket.availableQuantity > previousTicket.availableQuantity
+  );
+}
+
+function getChangedTickets(availableTickets, eventState, detectorChanged, alertOnlyOnChanges) {
+  if (!alertOnlyOnChanges) {
+    return {
+      alertTickets: availableTickets,
+      quantityIncreaseTickets: []
+    };
+  }
+
+  const previousTicketsById = getTicketsById(
+    detectorChanged ? [] : eventState.activeAthleteTickets || []
+  );
+  const previousActiveIds = new Set(
+    detectorChanged ? [] : eventState.activeAthleteTicketIds || []
+  );
+  const quantityIncreaseTickets = availableTickets.filter((ticket) =>
+    isQuantityIncrease(ticket, previousTicketsById.get(ticket.id))
+  );
+  const alertTickets = availableTickets
+    .filter((ticket) => {
+      const previousTicket = previousTicketsById.get(ticket.id);
+      return (
+        !previousActiveIds.has(ticket.id) ||
+        isQuantityIncrease(ticket, previousTicket)
+      );
+    })
+    .map((ticket) => {
+      const previousTicket = previousTicketsById.get(ticket.id);
+      if (!isQuantityIncrease(ticket, previousTicket)) {
+        return ticket;
+      }
+
+      return {
+        ...ticket,
+        previousAvailableQuantity: previousTicket.availableQuantity
+      };
+    });
+
+  return {
+    alertTickets,
+    quantityIncreaseTickets
+  };
+}
+
 function readBooleanEnv(name) {
   const value = process.env[name];
   if (value === undefined) return undefined;
@@ -568,7 +632,11 @@ function formatTicket(ticket, eventConfig = {}) {
     typeof ticket.availableQuantity === "number"
       ? `, ${ticket.availableQuantity} available`
       : "";
-  return `${ticket.name} (${ticket.competitionClass || "unknown class"}, ${date}${available})`;
+  const previousAvailable =
+    typeof ticket.previousAvailableQuantity === "number"
+      ? `, was ${ticket.previousAvailableQuantity}`
+      : "";
+  return `${ticket.name} (${ticket.competitionClass || "unknown class"}, ${date}${available}${previousAvailable})`;
 }
 
 function buildDiscordMessage({ config, eventConfig, event, newTickets, priorityTickets, ticketFilter }) {
@@ -589,7 +657,7 @@ function buildDiscordMessage({ config, eventConfig, event, newTickets, priorityT
   }
 
   const mention = discord.mention && priorityTickets.length === 0 ? `${discord.mention} ` : "";
-  lines.push(`${mention}${eventName} available monitored athlete ticket change detected.`);
+  lines.push(`${mention}${eventName} new or increased monitored athlete ticket availability detected.`);
   for (const ticket of newTickets) {
     lines.push(`- ${formatTicket(ticket, eventConfig)}`);
   }
@@ -879,16 +947,19 @@ async function main() {
     const detectorChanged =
       !!eventState.lastCheckedAt &&
       eventState.availabilityDetectorVersion !== AVAILABILITY_DETECTOR_VERSION;
-    const previousActiveIds = new Set(
-      detectorChanged ? [] : eventState.activeAthleteTicketIds || []
-    );
     const firstRun = !eventState.lastCheckedAt;
     const alertOnFirstRun = config.monitoring.alertOnFirstRunAvailableTickets === true;
     const alertOnlyOnChanges = config.monitoring.alertOnlyOnChanges !== false;
-    const stateNewTickets = alertOnlyOnChanges
-      ? availableTickets.filter((ticket) => !previousActiveIds.has(ticket.id))
-      : availableTickets;
-    const alertTickets = firstRun && alertOnFirstRun ? availableTickets : stateNewTickets;
+    const changedTickets = getChangedTickets(
+      availableTickets,
+      eventState,
+      detectorChanged,
+      alertOnlyOnChanges
+    );
+    const alertTickets = firstRun
+      ? (alertOnFirstRun ? availableTickets : [])
+      : changedTickets.alertTickets;
+    const quantityIncreaseTickets = firstRun ? [] : changedTickets.quantityIncreaseTickets;
     const priorityTickets = alertTickets.filter((ticket) =>
       isPriorityTicket(ticket, ticketFilter.prioritySignals || [])
     );
@@ -907,6 +978,7 @@ async function main() {
         pageTicketCount: event.tickets.length,
         availableMatchedTicketCount: availableTickets.length,
         newMatchedTicketCount: alertTickets.length,
+        quantityIncreaseMatchedTicketCount: quantityIncreaseTickets.length,
         priorityNewMatchedTicketCount: priorityTickets.length
       }
     };
@@ -935,7 +1007,7 @@ async function main() {
     }
 
     if (alertTickets.length === 0) {
-      console.log("No new available monitored athlete tickets for this event since the last run.");
+      console.log("No new or increased available monitored athlete tickets for this event since the last run.");
       continue;
     }
 
@@ -948,7 +1020,7 @@ async function main() {
       ticketFilter
     });
 
-    console.log("New available monitored athlete tickets detected:");
+    console.log("New or increased available monitored athlete tickets detected:");
     for (const ticket of alertTickets) {
       const priority = priorityTickets.some((priorityTicket) => priorityTicket.id === ticket.id)
         ? " PRIORITY"
