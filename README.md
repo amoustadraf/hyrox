@@ -22,6 +22,8 @@ The monitor alerts on:
 
 It ignores charity, adaptive, spectator, photo package, and Free U12 tickets.
 
+During public-sale queues or waiting-room pages, HYROX/Vivenu may temporarily stop serving normal ticket JSON. In that case the monitor now tries the cached checkout URL, and if checkout is also unreadable it preserves the last known state instead of failing the whole workflow.
+
 ## Run Locally
 
 ```powershell
@@ -63,4 +65,4 @@ Use that document for architecture, page parsing details, state behavior, filter
 
 ## Safety
 
-This monitor only reads public page data. It does not attempt checkout, bypass queues, solve captchas, reserve tickets, or interact with payment flows.
+This monitor only reads public page data and checkout availability JSON. It does not add tickets to cart, bypass purchase queues or checkout controls, solve captchas, reserve tickets, or interact with payment flows.

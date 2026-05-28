@@ -13,7 +13,7 @@ The current setup watches:
 - AirAsia HYROX Seoul | Season 26/27
 - HYROX Vancouver, waiting for the official page to expose a ticket page
 
-The monitor is intentionally conservative. It reads public HYROX/Vivenu page data, does not attempt checkout, does not bypass queues, does not solve captchas, and does not hammer the site.
+The monitor is intentionally conservative. It reads public HYROX/Vivenu page data and checkout availability JSON, but it does not add tickets to cart, bypass purchase queues or checkout controls, solve captchas, reserve tickets, or interact with payment flows.
 
 ## Quick Start
 
@@ -90,6 +90,8 @@ At a high level, each run does this:
 12. Writes the new state only after required Discord ticket alerts are delivered.
 
 This matters because a failed Discord send should not mark a ticket as already seen. If Discord fails for a ticket alert, the script fails and keeps the previous state so a later run can alert again.
+
+During high-traffic public-sale windows, HYROX/Vivenu may serve a queue, waiting-room, or sale gate page at the event URL. Those pages can still include `__NEXT_DATA__` but not include `props.pageProps.event.tickets`. When that happens, the monitor treats the event page as temporarily unreadable. If the event has a previously saved checkout URL, it tries that checkout URL directly. If checkout is also unreadable, it records a temporary unreadable status, preserves the previous active ticket state, and continues checking the other events instead of failing the whole workflow.
 
 ## What It Reads From The Page
 
@@ -236,6 +238,7 @@ State stores:
 - currently active monitored ticket IDs
 - currently active monitored ticket summaries, including available quantities
 - last result counts, including changed, new-ID, quantity-increase, and priority counts
+- temporary unreadable statuses for sale gates, queues, or waiting-room pages
 - latest error details, only when a run fails
 
 State is ignored by git. It is runtime data, not source code.
@@ -430,6 +433,8 @@ When the monitor fails after retries:
 
 After a later successful run, stale `lastError` data is cleared from the new state.
 
+Some ticket-page problems are handled without failing the workflow. If the event page temporarily lacks `event.tickets`, lacks `__NEXT_DATA__`, or returns transient HTTP statuses such as `429`, `500`, `502`, `503`, or `504`, the monitor treats it as a temporary sale-page/readability issue. It will use a cached checkout URL if one exists. If both the event page and checkout page are unreadable, it writes `ticket_page_temporarily_unreadable` or `ticket_checkout_temporarily_unreadable` in event state and preserves the previous active ticket IDs and quantities. This avoids repeated Discord error spam during public-sale waiting rooms while still making the condition visible in logs/state.
+
 ## Logs And Diagnostics
 
 Local log file:
@@ -471,8 +476,8 @@ GitHub Actions should receive the webhook only through the repository secret nam
 - The monitor can miss very short ticket drops if the check interval is too long.
 - GitHub Actions schedules are not real-time and can be delayed.
 - If HYROX changes the page structure or removes `__NEXT_DATA__`, the parser may need to be updated.
-- If HYROX adds a queue, captcha, or other anti-bot gate before public page data, the monitor should fail or back off rather than bypass it.
-- The monitor only reports availability. It does not reserve tickets or interact with checkout.
+- If HYROX adds a queue, captcha, or other anti-bot gate before public page data, the monitor preserves state and backs off from treating that run as reliable data. If a previously learned checkout availability JSON URL is still publicly readable, it may use that data, but it does not add tickets to cart or bypass purchase controls.
+- The monitor only reports availability. It does not reserve tickets, add tickets to cart, or interact with payment flows.
 
 ## Current Expected Dry Run Shape
 

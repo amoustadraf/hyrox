@@ -136,6 +136,15 @@ function serializeError(error) {
   };
 }
 
+function isTemporaryTicketPageError(error) {
+  const message = error?.message || String(error);
+  return (
+    /Could not find event\.tickets in the event page JSON/i.test(message) ||
+    /Could not find the __NEXT_DATA__ JSON block/i.test(message) ||
+    /Fetch failed: HTTP (429|500|502|503|504)\b/i.test(message)
+  );
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -755,6 +764,46 @@ function validateCheckoutAvailability(event, eventConfig) {
   }
 }
 
+function buildUnavailableTicketPageState({
+  eventConfig,
+  eventState,
+  checkedAt,
+  ticketPageUrl,
+  checkoutPageUrl,
+  status,
+  error
+}) {
+  const activeAthleteTickets = eventState.activeAthleteTickets || [];
+  const serializedError = error ? serializeError(error) : null;
+
+  return {
+    ...eventState,
+    lastCheckedAt: checkedAt,
+    eventName: eventState.eventName || eventConfig.name,
+    eventId: eventState.eventId,
+    officialEventPageUrl: eventConfig.officialEventPageUrl,
+    ticketPageUrl,
+    checkoutPageUrl: checkoutPageUrl || eventState.checkoutPageUrl || null,
+    availabilityDetectorVersion:
+      eventState.availabilityDetectorVersion || AVAILABILITY_DETECTOR_VERSION,
+    activeAthleteTicketIds: eventState.activeAthleteTicketIds || [],
+    activeAthleteTickets,
+    lastResult: {
+      status,
+      preservedPreviousAvailability: true,
+      lastKnownAvailableMatchedTicketCount: activeAthleteTickets.length,
+      error: serializedError,
+      availableMatchedTicketCount: null,
+      changedMatchedTicketCount: 0,
+      newMatchedTicketCount: 0,
+      quantityIncreaseMatchedTicketCount: 0,
+      priorityChangedMatchedTicketCount: 0,
+      priorityNewMatchedTicketCount: 0,
+      priorityQuantityIncreaseMatchedTicketCount: 0
+    }
+  };
+}
+
 function buildWorkflowFailureMessage(config) {
   const runUrl = getGitHubRunUrl();
   const headline = runUrl
@@ -923,28 +972,85 @@ async function main() {
       ...eventConfig,
       ticketPageUrl
     };
-    const pageEvent = await withRetries(config, `Fetch event page for ${eventConfig.name}`, async () => {
-      const nextData = extractNextData(await fetchText(ticketPageUrl, config));
-      const pageEvent = nextData.props?.pageProps?.event;
+    let pageEvent = null;
+    let checkoutPageUrl = null;
+    let eventPageError = null;
 
-      validateEventTickets(pageEvent, resolvedEventConfig, "event page");
+    try {
+      pageEvent = await withRetries(config, `Fetch event page for ${eventConfig.name}`, async () => {
+        const nextData = extractNextData(await fetchText(ticketPageUrl, config));
+        const eventFromPage = nextData.props?.pageProps?.event;
 
-      return pageEvent;
-    });
-    const checkoutPageUrl = deriveCheckoutPageUrl(resolvedEventConfig, pageEvent);
-    const checkoutEvent = await withRetries(config, `Fetch checkout availability for ${eventConfig.name}`, async () => {
-      const nextData = extractNextData(await fetchText(checkoutPageUrl, config));
-      const pageEvent = nextData.props?.pageProps?.event;
+        validateEventTickets(eventFromPage, resolvedEventConfig, "event page");
 
-      validateCheckoutAvailability(pageEvent, resolvedEventConfig);
+        return eventFromPage;
+      });
+      checkoutPageUrl = deriveCheckoutPageUrl(resolvedEventConfig, pageEvent);
+    } catch (error) {
+      if (!isTemporaryTicketPageError(error)) {
+        throw error;
+      }
 
-      return pageEvent;
-    });
+      eventPageError = error;
+      checkoutPageUrl = eventState.checkoutPageUrl || null;
+
+      if (!checkoutPageUrl) {
+        nextState.events[eventConfig.key] = buildUnavailableTicketPageState({
+          eventConfig: resolvedEventConfig,
+          eventState,
+          checkedAt,
+          ticketPageUrl,
+          checkoutPageUrl,
+          status: "ticket_page_temporarily_unreadable",
+          error
+        });
+
+        console.log(`Checked ${eventConfig.name}.`);
+        console.log("Ticket page temporarily unreadable; preserving previous availability state.");
+        console.log(`Reason: ${error.message}`);
+        continue;
+      }
+
+      console.warn(`Ticket event page temporarily unreadable for ${eventConfig.name}; using cached checkout URL.`);
+      console.warn(`Reason: ${error.message}`);
+    }
+
+    let checkoutEvent = null;
+    try {
+      checkoutEvent = await withRetries(config, `Fetch checkout availability for ${eventConfig.name}`, async () => {
+        const nextData = extractNextData(await fetchText(checkoutPageUrl, config));
+        const eventFromCheckout = nextData.props?.pageProps?.event;
+
+        validateCheckoutAvailability(eventFromCheckout, resolvedEventConfig);
+
+        return eventFromCheckout;
+      });
+    } catch (error) {
+      if (!eventPageError && !isTemporaryTicketPageError(error)) {
+        throw error;
+      }
+
+      nextState.events[eventConfig.key] = buildUnavailableTicketPageState({
+        eventConfig: resolvedEventConfig,
+        eventState,
+        checkedAt,
+        ticketPageUrl,
+        checkoutPageUrl,
+        status: "ticket_checkout_temporarily_unreadable",
+        error
+      });
+
+      console.log(`Checked ${eventConfig.name}.`);
+      console.log("Ticket checkout temporarily unreadable; preserving previous availability state.");
+      console.log(`Reason: ${error.message}`);
+      continue;
+    }
+
     const event = {
-      ...pageEvent,
+      ...(pageEvent || {}),
       ...checkoutEvent,
       tickets: checkoutEvent.tickets,
-      categories: checkoutEvent.categories || pageEvent.categories || []
+      categories: checkoutEvent.categories || pageEvent?.categories || []
     };
 
     const ticketFilter = mergeTicketFilter(config, resolvedEventConfig);
@@ -978,8 +1084,8 @@ async function main() {
 
     nextState.events[eventConfig.key] = {
       lastCheckedAt: checkedAt,
-      eventName: event.name,
-      eventId: event._id,
+      eventName: event.name || eventState.eventName || eventConfig.name,
+      eventId: event._id || event.id || eventState.eventId,
       officialEventPageUrl: eventConfig.officialEventPageUrl,
       ticketPageUrl,
       checkoutPageUrl,
@@ -998,7 +1104,7 @@ async function main() {
       }
     };
 
-    console.log(`Checked ${event.name}.`);
+    console.log(`Checked ${event.name || eventState.eventName || eventConfig.name}.`);
     console.log(`Page ticket types: ${event.tickets.length}`);
     console.log(`Available monitored athlete tickets: ${availableTickets.length}`);
 
