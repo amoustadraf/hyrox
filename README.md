@@ -18,11 +18,12 @@ The monitor alerts on:
 - new monitored athlete ticket IDs
 - higher available quantity for an already-seen monitored ticket
 - Open Men as a priority alert
+- first entry into a waiting-room/sale-gate unreadable state
 - monitor or workflow failures when Discord is configured
 
 It ignores charity, adaptive, spectator, photo package, and Free U12 tickets.
 
-During public-sale queues or waiting-room pages, HYROX/Vivenu may temporarily stop serving normal ticket JSON. In that case the monitor now tries the cached checkout URL, and if checkout is also unreadable it preserves the last known state instead of failing the whole workflow.
+During public-sale queues or waiting-room pages, HYROX/Vivenu may temporarily stop serving normal ticket JSON. In that case the monitor sends a one-time Discord alert when the event first enters that unreadable state, tries the cached checkout URL, and if checkout is also unreadable it preserves the last known state instead of failing the whole workflow.
 
 ## Run Locally
 

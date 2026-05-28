@@ -91,7 +91,7 @@ At a high level, each run does this:
 
 This matters because a failed Discord send should not mark a ticket as already seen. If Discord fails for a ticket alert, the script fails and keeps the previous state so a later run can alert again.
 
-During high-traffic public-sale windows, HYROX/Vivenu may serve a queue, waiting-room, or sale gate page at the event URL. Those pages can still include `__NEXT_DATA__` but not include `props.pageProps.event.tickets`. When that happens, the monitor treats the event page as temporarily unreadable. If the event has a previously saved checkout URL, it tries that checkout URL directly. If checkout is also unreadable, it records a temporary unreadable status, preserves the previous active ticket state, and continues checking the other events instead of failing the whole workflow.
+During high-traffic public-sale windows, HYROX/Vivenu may serve a queue, waiting-room, or sale gate page at the event URL. Those pages can still include `__NEXT_DATA__` but not include `props.pageProps.event.tickets`. When that happens, the monitor treats the event page as temporarily unreadable and sends a one-time Discord alert when the event first enters that unreadable state. If the event has a previously saved checkout URL, it tries that checkout URL directly. If checkout is also unreadable, it records a temporary unreadable status, preserves the previous active ticket state, and continues checking the other events instead of failing the whole workflow.
 
 ## What It Reads From The Page
 
@@ -293,6 +293,7 @@ The Discord notification types are configured here:
   "new_active_athlete_ticket",
   "ticket_became_active",
   "priority_ticket_became_active",
+  "ticket_page_temporarily_unreadable",
   "monitor_error_after_retries"
 ]
 ```
@@ -433,7 +434,7 @@ When the monitor fails after retries:
 
 After a later successful run, stale `lastError` data is cleared from the new state.
 
-Some ticket-page problems are handled without failing the workflow. If the event page temporarily lacks `event.tickets`, lacks `__NEXT_DATA__`, or returns transient HTTP statuses such as `429`, `500`, `502`, `503`, or `504`, the monitor treats it as a temporary sale-page/readability issue. It will use a cached checkout URL if one exists. If both the event page and checkout page are unreadable, it writes `ticket_page_temporarily_unreadable` or `ticket_checkout_temporarily_unreadable` in event state and preserves the previous active ticket IDs and quantities. This avoids repeated Discord error spam during public-sale waiting rooms while still making the condition visible in logs/state.
+Some ticket-page problems are handled without failing the workflow. If the event page temporarily lacks `event.tickets`, lacks `__NEXT_DATA__`, or returns transient HTTP statuses such as `429`, `500`, `502`, `503`, or `504`, the monitor treats it as a temporary sale-page/readability issue. It sends a Discord alert only when the event transitions from a normal/readable state into a temporary unreadable state; repeated unreadable runs stay quiet until the event becomes readable again. It will use a cached checkout URL if one exists. If both the event page and checkout page are unreadable, it writes `ticket_page_temporarily_unreadable` or `ticket_checkout_temporarily_unreadable` in event state and preserves the previous active ticket IDs and quantities. This avoids repeated Discord error spam during public-sale waiting rooms while still making the condition visible in logs/state.
 
 ## Logs And Diagnostics
 

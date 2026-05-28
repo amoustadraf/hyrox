@@ -119,6 +119,7 @@
         "new_active_athlete_ticket",
         "ticket_became_active",
         "priority_ticket_became_active",
+        "ticket_page_temporarily_unreadable",
         "monitor_error_after_retries"
       ]
     }

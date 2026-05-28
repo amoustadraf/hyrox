@@ -145,6 +145,14 @@ function isTemporaryTicketPageError(error) {
   );
 }
 
+function isTemporaryUnreadableStatus(status) {
+  return (
+    status === "event_page_temporarily_unreadable_checkout_readable" ||
+    status === "ticket_page_temporarily_unreadable" ||
+    status === "ticket_checkout_temporarily_unreadable"
+  );
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -464,6 +472,10 @@ function shouldNotifyTicketAlert(config, priorityTickets) {
   );
 }
 
+function shouldNotifyTemporaryUnreadableAlert(config) {
+  return shouldNotify(config, "ticket_page_temporarily_unreadable");
+}
+
 function resolveStateFile(config) {
   const configuredPath = process.env.HYROX_STATE_FILE || config.monitoring.stateFile;
   return path.isAbsolute(configuredPath)
@@ -677,6 +689,37 @@ function buildDiscordMessage({ config, eventConfig, event, changedTickets, prior
   return lines.join("\n").slice(0, 1900);
 }
 
+function buildTemporaryUnreadableMessage({ eventConfig, status, error, ticketPageUrl, checkoutPageUrl }) {
+  const runUrl = getGitHubRunUrl();
+  const lines = [
+    `HYROX ticket page visibility changed: ${eventConfig.name}`,
+    `Status: ${status}`,
+    `Reason: ${error?.message || "Ticket page temporarily unreadable."}`,
+    "",
+    "This usually means HYROX/Vivenu is serving a queue, waiting room, or sale gate instead of normal ticket JSON."
+  ];
+
+  if (checkoutPageUrl) {
+    lines.push("The monitor will try cached checkout availability JSON when it is still publicly readable.");
+  } else {
+    lines.push("No cached checkout URL is available yet, so the monitor preserved the last known state.");
+  }
+
+  lines.push("");
+  lines.push(ticketPageUrl);
+
+  if (checkoutPageUrl) {
+    lines.push(checkoutPageUrl);
+  }
+
+  if (runUrl) {
+    lines.push("");
+    lines.push(`GitHub run: ${runUrl}`);
+  }
+
+  return lines.filter(Boolean).join("\n").slice(0, 1900);
+}
+
 async function sendDiscordMessage(config, content) {
   const discord = config.notifications?.discord || {};
   const webhookUrl = process.env[discord.webhookUrlEnvVar || "DISCORD_WEBHOOK_URL"];
@@ -802,6 +845,39 @@ function buildUnavailableTicketPageState({
       priorityQuantityIncreaseMatchedTicketCount: 0
     }
   };
+}
+
+function maybeQueueTemporaryUnreadableAlert({
+  config,
+  alertMessages,
+  eventConfig,
+  eventState,
+  status,
+  error,
+  ticketPageUrl,
+  checkoutPageUrl
+}) {
+  const previousStatus = eventState.lastResult?.status;
+
+  if (isTemporaryUnreadableStatus(previousStatus)) {
+    console.log("Temporary unreadable state already reported for this event.");
+    return;
+  }
+
+  if (!shouldNotifyTemporaryUnreadableAlert(config)) {
+    console.log("Discord temporary unreadable notification type disabled.");
+    return;
+  }
+
+  alertMessages.push(
+    buildTemporaryUnreadableMessage({
+      eventConfig,
+      status,
+      error,
+      ticketPageUrl,
+      checkoutPageUrl
+    })
+  );
 }
 
 function buildWorkflowFailureMessage(config) {
@@ -995,6 +1071,17 @@ async function main() {
       checkoutPageUrl = eventState.checkoutPageUrl || null;
 
       if (!checkoutPageUrl) {
+        maybeQueueTemporaryUnreadableAlert({
+          config,
+          alertMessages,
+          eventConfig: resolvedEventConfig,
+          eventState,
+          status: "ticket_page_temporarily_unreadable",
+          error,
+          ticketPageUrl,
+          checkoutPageUrl
+        });
+
         nextState.events[eventConfig.key] = buildUnavailableTicketPageState({
           eventConfig: resolvedEventConfig,
           eventState,
@@ -1013,6 +1100,16 @@ async function main() {
 
       console.warn(`Ticket event page temporarily unreadable for ${eventConfig.name}; using cached checkout URL.`);
       console.warn(`Reason: ${error.message}`);
+      maybeQueueTemporaryUnreadableAlert({
+        config,
+        alertMessages,
+        eventConfig: resolvedEventConfig,
+        eventState,
+        status: "event_page_temporarily_unreadable_checkout_readable",
+        error,
+        ticketPageUrl,
+        checkoutPageUrl
+      });
     }
 
     let checkoutEvent = null;
@@ -1029,6 +1126,17 @@ async function main() {
       if (!eventPageError && !isTemporaryTicketPageError(error)) {
         throw error;
       }
+
+      maybeQueueTemporaryUnreadableAlert({
+        config,
+        alertMessages,
+        eventConfig: resolvedEventConfig,
+        eventState,
+        status: "ticket_checkout_temporarily_unreadable",
+        error,
+        ticketPageUrl,
+        checkoutPageUrl
+      });
 
       nextState.events[eventConfig.key] = buildUnavailableTicketPageState({
         eventConfig: resolvedEventConfig,
@@ -1093,6 +1201,11 @@ async function main() {
       activeAthleteTicketIds: availableTickets.map((ticket) => ticket.id),
       activeAthleteTickets: availableTickets,
       lastResult: {
+        status: eventPageError
+          ? "event_page_temporarily_unreadable_checkout_readable"
+          : "ok",
+        eventPageTemporarilyUnreadable: !!eventPageError,
+        eventPageTemporaryUnreadableError: eventPageError ? serializeError(eventPageError) : null,
         pageTicketCount: event.tickets.length,
         availableMatchedTicketCount: availableTickets.length,
         changedMatchedTicketCount: alertTickets.length,
