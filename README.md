@@ -7,7 +7,6 @@ This README is the short GitHub-facing overview. Detailed internal handoff docum
 ## Current Events
 
 - GoodLife HYROX Toronto | Season 26/27
-- HYROX Chiba | Season 26/27, men divisions only
 - AirAsia HYROX Seoul | Season 26/27
 - HYROX Vancouver, waiting for a ticket page
 

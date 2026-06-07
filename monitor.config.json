@@ -12,26 +12,6 @@
       }
     },
     {
-      "key": "chiba",
-      "name": "HYROX Chiba | Season 26/27",
-      "officialEventPageUrl": "https://hyrox.com/event/hyrox-chiba/",
-      "ticketPageUrl": "https://japan.hyrox.com/event/hyrox-chiba-season-26-27-qzyubs?useEmbed=true",
-      "eventDates": {
-        "start": "2026-08-06",
-        "end": "2026-08-09",
-        "timezone": "Asia/Tokyo"
-      },
-      "ticketFilter": {
-        "includedCompetitionClasses": [
-          "SOLO_OPEN_M",
-          "SOLO_PRO_M",
-          "DOUBLES_OPEN_M",
-          "DOUBLES_PRO_M",
-          "RELAY_M"
-        ]
-      }
-    },
-    {
       "key": "seoul",
       "name": "AirAsia HYROX Seoul",
       "officialEventPageUrl": "https://hyrox.com/event/hyrox-seoul/",

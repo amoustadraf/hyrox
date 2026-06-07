@@ -9,7 +9,6 @@ This repository monitors configured HYROX event ticket pages and sends Discord a
 The current setup watches:
 
 - GoodLife HYROX Toronto | Season 26/27
-- HYROX Chiba | Season 26/27, men divisions only
 - AirAsia HYROX Seoul | Season 26/27
 - HYROX Vancouver, waiting for the official page to expose a ticket page
 
@@ -170,19 +169,7 @@ The global ignore list is:
 ]
 ```
 
-Chiba has an event-specific included class list:
-
-```json
-[
-  "SOLO_OPEN_M",
-  "SOLO_PRO_M",
-  "DOUBLES_OPEN_M",
-  "DOUBLES_PRO_M",
-  "RELAY_M"
-]
-```
-
-That means Chiba is intentionally men-only. Other events use the global filter and will alert for any available non-charity, non-adaptive athlete ticket unless event-specific filters are added later.
+All currently tracked events use the global filter and will alert for any available non-charity, non-adaptive athlete ticket unless event-specific filters are added later.
 
 ## Priority Alerts
 
@@ -312,7 +299,7 @@ The hourly schedule is:
 - cron: "17 * * * *"
 ```
 
-GitHub schedules use UTC. One hourly run is used to cover Toronto, Chiba, Seoul, and Vancouver without mapping separate time-zone windows.
+GitHub schedules use UTC. One hourly run is used to cover Toronto, Seoul, and Vancouver without mapping separate time-zone windows.
 
 The workflow:
 
@@ -486,9 +473,6 @@ With the current live event pages, a healthy dry-run looks like:
 
 ```text
 Checked GoodLife HYROX Toronto | Season 26/27.
-Available monitored athlete tickets: 0
-
-Checked HYROX Chiba | Season 26/27.
 Available monitored athlete tickets: 0
 
 Checked AirAsia | HYROX Seoul | Season 26/27.
