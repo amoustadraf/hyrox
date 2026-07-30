@@ -55,6 +55,13 @@ Workflow file:
 .github/workflows/hyrox-ticket-monitor.yml
 ```
 
+### Scheduled Workflow Maintenance
+
+GitHub may disable scheduled workflows in public repositories after 60 days
+without repository activity. Push a project update before that limit to keep the
+schedule active. If the schedule is disabled, open the **Actions** tab, select
+**HYROX Ticket Monitor**, and choose **Enable workflow**.
+
 ## Documentation
 
 Full internal project documentation is in:
